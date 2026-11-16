@@ -1,0 +1,1 @@
+ALTER TABLE `turns` ADD `search_display` text;

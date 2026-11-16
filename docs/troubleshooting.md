@@ -1,0 +1,26 @@
+# Troubleshooting
+
+Start with `cortecho doctor` (also `npm run doctor`). It checks the settings,
+the secrets, the Echo link, the reply address and the OpenAI endpoint, and
+prints the fix for each failure. The same checks are on the status page.
+
+Then look at the app log (`docker compose logs -f app`) and, on the Echo,
+`/data/local/hassmic/boot.log`.
+
+| Symptom | Cause / fix |
+|---|---|
+| Status "Connecting…", log `connect … ECONNREFUSED` | hassmic is not in ESPHome mode (`grep PROTO /data/local/hassmic/hassmic.conf`) or not running |
+| `the Echo refused plaintext: an API key is set on it` | The Echo has a key but this device has none (`encryption-required`), or Home Assistant adopted the Echo. Add the key on the Echo's Connection tab |
+| `handshake refused: Handshake MAC failure` (`invalid-key`) | The device's key is not the Echo's key, or the Echo has none yet (run `npm run echo-set-key`) |
+| `ECHO_API_KEY is set but the Echo answered in plaintext` (`key-not-set`) | hassmic speaks plaintext only here; check its version, or clear the device's key |
+| Both Echos answer the same wake word | The Echos are not paired: hold Volume up + Volume down for 2 s on each (see [Echo setup](echo-setup.md#several-echos)) |
+| `duplicate-node-name` on two cards | Both have the same `NAME` in `hassmic.conf`; hassmic's network needs unique names |
+| `unexpected-device` on a card | The address now reports another node name; use **Accept new device** if that is expected |
+| Connected, but the wake word does nothing | Another client subscribed to the voice assistant first (`boot.log`: `a second client tried to subscribe, ignored`). Stop the other client (a dev server, Home Assistant) and reconnect the device |
+| The Echo keeps listening long after you stopped | The VAD did not hear the end: a noisy room close to your voice level. Check the noise floor with `DEBUG_AUDIO_DIR`; raise the speech margin or silence threshold in **Settings → Listening**, or turn on hassmic's experimental end-of-request detection |
+| Turn stops after "thinking", Echo plays nothing, log `no playback report` | The Echo cannot download the reply: check `REPLY_AUDIO_BASE_URL` (LAN address and port) and `boot.log` `media: http://… ->` |
+| Clock still 2010 / "Clock sent: –" | The Echo has no key, so the link is plaintext (`boot.log`: `clock: … not set …`), or hassmic has not asked yet (it asks after its start and every 6 h) |
+| A setting changed in `cortecho.env` does nothing | Behaviour settings are imported only on a fresh database. Change them in the UI (see [configuration](configuration.md)) |
+| Follow-up never comes | The model did not call `listen_for_reply` (see the turn's tool calls in the UI), or the answer did not end with "?" in `question` mode; the Echo's wake sound may also be off (the follow-up still listens) |
+| `OPENAI_API_KEY missing` on the status page | The key is not in Settings. Add it under **Settings → Advanced** |
+| Search answers are cut off | Raise **Maximum answer length**: reasoning and search queries share the token budget |

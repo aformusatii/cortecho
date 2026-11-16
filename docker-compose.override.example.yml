@@ -1,0 +1,17 @@
+# Optional, machine-specific additions to docker-compose.yml. Copy this file
+# to docker-compose.override.yml (gitignored) and adjust. Compose merges it
+# automatically on `docker compose up`.
+#
+# Most installs do not need this file: put the settings in cortecho.env (see
+# cortecho.env.example). Use an override for things that differ on one host,
+# such as a fixed container name, a different port, or an extra bind mount.
+services:
+  app:
+    container_name: cortecho
+    # The Echoes and the OpenAI key are imported once, on a fresh database.
+    # Afterwards the database is the source of truth (the web UI edits it).
+    env_file:
+      - ./cortecho.env
+    environment:
+      # This app as the Echo reaches it on the LAN (never a public URL).
+      REPLY_AUDIO_BASE_URL: http://192.168.1.10:3000

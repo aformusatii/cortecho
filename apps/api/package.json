@@ -1,0 +1,29 @@
+{
+  "name": "@cortecho/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --env-file-if-exists=../../.env src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node --env-file-if-exists=../../.env src/db/migrate.ts",
+    "db:studio": "drizzle-kit studio",
+    "fake-echo": "node src/scripts/fake-echo.ts",
+    "echo-set-key": "node --env-file-if-exists=../../.env src/scripts/echo-set-key.ts"
+  },
+  "dependencies": {
+    "@cortecho/shared": "^0.1.0",
+    "@hono/node-server": "^2.1.5",
+    "@hono/zod-validator": "^0.9.1",
+    "better-sqlite3": "^13.0.3",
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4.13.13",
+    "openai": "^7.53.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "drizzle-kit": "^0.31.11"
+  }
+}

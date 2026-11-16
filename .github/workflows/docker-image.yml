@@ -1,0 +1,122 @@
+# Builds the production Docker image and pushes it to GitHub Container
+# Registry (ghcr.io), which is free and needs no extra secrets: the job logs
+# in with the GITHUB_TOKEN that every workflow run gets automatically.
+#
+#   push to main      → ghcr.io/<owner>/<repo>:latest           + :sha-<short>
+#   push tag v1.2.3   → :1.2.3, :1.2                           + :sha-<short>
+#   pull request      → build only (proves the Dockerfile still works), no push
+#
+# After a tag's image is pushed, the `release` job publishes a GitHub Release
+# for that tag. Plain pushes to main do not create releases: a release is a
+# deliberate decision, and the tag is how you make it (`git tag v1.2.3 && git
+# push origin v1.2.3`).
+name: Docker image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to the same branch makes an older, still-running build pointless.
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required to push to ghcr.io with GITHUB_TOKEN.
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ghcr.io image names must be lowercase, and GitHub expressions have no
+      # lower() function, so the shell lowercases "owner/repo". The image name
+      # then always follows the repository name, also after a rename.
+      - name: Compute image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute image tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            type=ref,event=pr
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Reuse layers (above all the `npm ci` layer) between runs.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    # Only for version tags, and only after the image for that tag is pushed,
+    # so a release never points at an image that does not exist.
+    needs: build-and-push
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to create a release with GITHUB_TOKEN.
+      contents: write
+
+    steps:
+      # The gh CLI is preinstalled on GitHub-hosted runners, so no third-party
+      # release action is needed. --generate-notes lists the merged PRs and
+      # commits since the previous tag; a tag with a hyphen (v1.2.0-rc.1) is
+      # marked as a pre-release.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          image="ghcr.io/${GH_REPO,,}"
+          version="${TAG#v}"
+          prerelease=""
+          if [[ "$TAG" == *-* ]]; then prerelease="--prerelease"; fi
+
+          cat > notes.md <<NOTES
+          ## Docker image
+
+          \`\`\`bash
+          docker pull ${image}:${version}
+          docker run -d -p 3000:3000 -v "\$PWD/data:/app/data" ${image}:${version}
+          \`\`\`
+
+          NOTES
+
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file notes.md \
+            --generate-notes \
+            $prerelease

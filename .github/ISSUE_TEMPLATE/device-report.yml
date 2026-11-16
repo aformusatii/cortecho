@@ -1,0 +1,59 @@
+name: Device report
+description: Report that Cortecho works (or not) on an Echo model
+labels: [device]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Only the Echo Dot 2nd gen is tested by the project today. Reports for other models are valuable.
+        Do not include API keys or LAN addresses.
+  - type: input
+    id: model
+    attributes:
+      label: Echo model
+      placeholder: Echo Dot 3rd gen
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware / Fire OS version
+      placeholder: from `getprop ro.build.display.id`
+  - type: input
+    id: hassmic
+    attributes:
+      label: echo-dot-assist version or commit
+    validations:
+      required: true
+  - type: input
+    id: proto
+    attributes:
+      label: hassmic PROTO
+      placeholder: esphome
+    validations:
+      required: true
+  - type: dropdown
+    id: works
+    attributes:
+      label: Does the full voice loop work?
+      options:
+        - "Yes: wake word → answer"
+        - "Partly (describe below)"
+        - "No (describe below)"
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: What works?
+      options:
+        - label: Connected and encrypted
+        - label: Clock synced
+        - label: Follow-up questions
+        - label: Announcements (/api/say)
+        - label: Several Echos / pairing
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: What differed, what you had to change, and the relevant log lines.

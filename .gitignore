@@ -1,0 +1,57 @@
+node_modules/
+dist/
+dev-dist/
+coverage/
+*.tsbuildinfo
+.env
+.env.local
+cortecho.env
+/SystemPrompt.md
+
+# SQLite database files (the data/ folder itself is kept via .gitkeep)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+.DS_Store
+
+# Machine-specific compose additions (see docker-compose.override.example.yml)
+docker-compose.override.yml
+
+# ---------------------------------------------------------------------------
+# Owner's local notes - never published. These files stay on this machine and
+# hold details of the owner's own network, device and setup.
+# ---------------------------------------------------------------------------
+prompt.md
+setup.md
+refactoring_prompt.md
+claude_runner_prompt.md
+AGENTS.local.md
+specs/
+# Copier answers hold personal values and must not be edited by hand; the
+# public tree leaves the file out instead (see AGENTS.md "Template updates").
+.copier-answers.yml
+
+# ---------------------------------------------------------------------------
+# SECRETS - never commit. They live in this folder on the dev machine only.
+#   secrets.yaml      OPENAI_API_KEY=... (read by deploy, see README "Deploy")
+#   echo-dot-assist/  the Echo's update.key/update.pub (root access to the
+#                     Echo) and Wi-Fi config. Only adb-wifi.sh may read them.
+# ---------------------------------------------------------------------------
+secrets.yaml
+secrets.*
+echo-dot-assist/
+*.key
+*.pem
+# Debug recordings of your voice (DEBUG_AUDIO_DIR)
+data/audio/
+*.wav
+
+# SQLite backups made before a deployment (data/app.db.bak-*)
+data/*.db.bak*

@@ -1,0 +1,53 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove addresses, names and keys before posting. Never paste an API key or `data/app.db`.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Cortecho version or commit
+      placeholder: v0.1.0 / commit hash
+    validations:
+      required: true
+  - type: textarea
+    id: health
+    attributes:
+      label: /health output
+      description: Remove addresses and device names.
+      render: json
+  - type: textarea
+    id: doctor
+    attributes:
+      label: cortecho doctor output
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: Turn timings and errors only. Never include keys or audio.
+      render: text
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: Docker or npm, OS, Echo model, echo-dot-assist version, OpenAI or compatible server

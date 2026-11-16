@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-label="Cortecho — a brain for your Echo Dot">
+  <title>Cortecho</title>
+  <rect width="1280" height="640" fill="#1b2337"/>
+  <g transform="translate(520 92) scale(0.46875)">
+    <rect width="512" height="512" rx="112" fill="#1b2337"/>
+    <path d="M 342 379 A 150 150 0 1 1 342 133" fill="none" stroke="#f2b443" stroke-width="48" stroke-linecap="round"/>
+    <g fill="none" stroke-width="20" stroke-linecap="round">
+      <path d="M 190 212 C 228 176 296 190 314 236" stroke="#e9edf2"/>
+      <path d="M 178 272 C 218 242 282 258 328 286" stroke="#7fb5b5"/>
+      <path d="M 204 324 C 238 302 286 310 318 332" stroke="#e9edf2"/>
+    </g>
+  </g>
+  <text x="640" y="430" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="104" font-weight="700" letter-spacing="-3" fill="#e9edf2">Cortecho</text>
+  <text x="640" y="500" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="34" fill="#b9c3d3">A brain for your Echo Dot.</text>
+  <text x="640" y="548" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="26" fill="#7fb5b5">DIY AI voice assistant, no Home Assistant needed.</text>
+</svg>

@@ -1,0 +1,20 @@
+# Cortecho
+
+Cortecho is the brain for a rooted Amazon Echo Dot. It speaks the ESPHome
+native API to echo-dot-assist (hassmic), turns speech into text, runs an agent
+with tools, and speaks the answer back. No Home Assistant needed. This project
+is not affiliated with Amazon; Amazon, Echo and Alexa are trademarks of
+Amazon.com, Inc.
+
+## Documentation
+
+- [README](README.md): what it is, why an Echo Dot, quick start, FAQ.
+- [Protocol](docs/protocol.md): how a turn works, ESPHome messages, follow-ups.
+- [Performance](docs/performance.md): where the answer latency goes.
+- [Configuration](docs/configuration.md): the three layers, every setting.
+- [Deployment](docs/deployment.md): Docker, ports, backups.
+- [Echo setup](docs/echo-setup.md): echo-dot-assist, API key, clock, wake word.
+- [Troubleshooting](docs/troubleshooting.md): symptom and fix.
+- [Development](docs/development.md): commands, tests, adding a tool.
+- [HTTP API](docs/http-api.md): endpoints and error shape.
+- [Set up with an agent](docs/setup-with-an-agent.md): a page for a coding agent.

@@ -1,0 +1,352 @@
+import {
+  SETTING_BY_KEY,
+  SETTING_DESCRIPTORS,
+  SETTING_SECTIONS,
+  SETTINGS_SECTION_LABELS,
+  type SectionId,
+  type SettingsDocument,
+  type VoicePreview,
+} from '@cortecho/shared';
+import { useQueries, useQuery } from '@tanstack/react-query';
+import { FileTextIcon, HistoryIcon, RefreshCwIcon } from 'lucide-react';
+import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
+import { Badge } from '@/components/ui/badge.tsx';
+import { Button } from '@/components/ui/button.tsx';
+import { Skeleton } from '@/components/ui/skeleton.tsx';
+import { useReconnectDevice } from '@/features/devices/api/devices.mutations.ts';
+import { deviceSettingsQueryOptions, devicesQueryOptions } from '@/features/devices/api/devices.queries.ts';
+import { isApiError } from '@/lib/api-client.ts';
+import { useMediaQuery } from '@/lib/use-media-query.ts';
+import { useSaveSettings } from '../api/settings.mutations.ts';
+import { openaiModelsQueryOptions, settingsQueryOptions } from '../api/settings.queries.ts';
+import { FullPromptDialog } from '../components/FullPromptDialog.tsx';
+import { SaveBar } from '../components/SaveBar.tsx';
+import { SettingsHistoryDialog } from '../components/SettingsHistoryDialog.tsx';
+import { type OverriddenNote, SettingsSection } from '../components/SettingsSection.tsx';
+import { VoiceTestPhrase } from '../components/VoiceTestPhrase.tsx';
+import { changedKeys, descriptorsOfSection, type FormValues, focusField, validateForm } from '../draft.ts';
+
+/**
+ * The global settings: every descriptor rendered from the registry, one
+ * versioned document, a sticky save bar, and a 409 flow that keeps the unsaved
+ * values and offers to reapply them.
+ */
+export function SettingsPage() {
+  const settings = useQuery(settingsQueryOptions());
+  const devices = useQuery(devicesQueryOptions());
+  const models = useQuery(openaiModelsQueryOptions());
+  const save = useSaveSettings();
+  const reconnect = useReconnectDevice();
+  const isPhone = !useMediaQuery('(min-width: 1024px)');
+
+  const [draft, setDraft] = useState<FormValues | null>(null);
+  const [baseline, setBaseline] = useState<FormValues | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [conflictVersion, setConflictVersion] = useState<number | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [promptOpen, setPromptOpen] = useState(false);
+  const seededVersion = useRef<number | null>(null);
+  const awaitingConflict = useRef(false);
+  const document = settings.data;
+
+  // Seed once; after a 409 the refetched values become the new baseline but
+  // the owner's unsaved draft is kept so it can be reapplied.
+  useEffect(() => {
+    if (!document) return;
+    if (seededVersion.current === null) {
+      seededVersion.current = document.version;
+      const initial = seed(document);
+      setDraft(initial);
+      setBaseline(initial);
+    } else if (awaitingConflict.current) {
+      awaitingConflict.current = false;
+      setBaseline(seed(document));
+    }
+  }, [document]);
+
+  const deviceList = devices.data ?? [];
+  const deviceDocuments = useQueries({
+    queries: deviceList.map((device) => deviceSettingsQueryOptions(device.id)),
+  });
+
+  const overriddenBy = useMemo(() => {
+    const result = new Map<SectionId, OverriddenNote[]>();
+    deviceList.forEach((device, index) => {
+      const overrides = deviceDocuments[index]?.data?.overrides ?? {};
+      for (const section of SETTING_SECTIONS) {
+        const labels = Object.keys(overrides)
+          .map((key) => SETTING_BY_KEY.get(key))
+          .filter((descriptor) => descriptor?.section === section)
+          .map((descriptor) => descriptor?.label.toLowerCase() ?? '');
+        if (labels.length === 0) continue;
+        const entries = result.get(section) ?? [];
+        entries.push({ device, labels });
+        result.set(section, entries);
+      }
+    });
+    return result;
+  }, [deviceList, deviceDocuments]);
+
+  const dirty = draft && baseline ? changedKeys(draft, baseline) : [];
+  const dirtySet = new Set(dirty);
+
+  const voicePreview = useMemo<VoicePreview | undefined>(() => {
+    if (!draft) return undefined;
+    const voice = draft['tts.voice'];
+    const speed = draft['tts.speed'];
+    const instructions = draft['tts.instructions'];
+    return {
+      voice: typeof voice === 'string' && voice !== '' ? voice : undefined,
+      speed: typeof speed === 'number' ? speed : undefined,
+      instructions: typeof instructions === 'string' ? instructions : undefined,
+    };
+  }, [draft]);
+
+  function setValue(key: string, value: unknown) {
+    setDraft((previous) => (previous ? { ...previous, [key]: value } : previous));
+    setErrors((previous) => {
+      if (!(key in previous)) return previous;
+      const next = { ...previous };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function discard() {
+    setDraft(baseline);
+    setErrors({});
+    setConflictVersion(null);
+  }
+
+  function handleSave() {
+    if (!document || !draft || !baseline) return;
+    const keys = changedKeys(draft, baseline);
+    const found = validateForm(SETTING_DESCRIPTORS, draft, keys);
+    if (Object.keys(found).length > 0) {
+      setErrors(found);
+      focusFirst(found);
+      return;
+    }
+    setErrors({});
+    const changes = Object.fromEntries(keys.map((key) => [key, draft[key] ?? null]));
+    save.mutate(
+      { version: document.version, changes },
+      {
+        onSuccess: (next) => {
+          admit(next, setDraft, setBaseline, seededVersion);
+          setErrors({});
+          setConflictVersion(null);
+          toast.success('Settings saved.');
+        },
+        onError: (error) => {
+          if (isApiError(error) && error.status === 409) {
+            awaitingConflict.current = true;
+            setConflictVersion(document.version);
+            void settings.refetch();
+            return;
+          }
+          if (isApiError(error)) {
+            const fields = Object.fromEntries(
+              Object.entries(error.fields).filter(([key]) => key !== '_root'),
+            );
+            setErrors(fields);
+            focusFirst(fields);
+            toast.error(error.fields._root ?? error.message);
+            return;
+          }
+          toast.error(error instanceof Error ? error.message : 'Could not save.');
+        },
+      },
+    );
+  }
+
+  if (settings.isPending) {
+    return (
+      <div className="space-y-4" role="status" aria-busy="true">
+        <span className="sr-only">Loading settings…</span>
+        <Skeleton className="h-10 w-64" />
+        <Skeleton className="h-64 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (settings.isError || !document) {
+    return (
+      <div role="alert" className="space-y-3 rounded-xl border bg-card p-6 text-center">
+        <p className="font-medium">Could not load the settings</p>
+        <p className="text-sm text-muted-foreground">
+          {settings.error?.message ?? 'The server did not return a settings document.'}
+        </p>
+        <Button variant="outline" onClick={() => settings.refetch()}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
+  // The document arrived but the seeding effect has not run yet: one frame of
+  // skeleton, never the error card.
+  if (!draft || !baseline) {
+    return (
+      <div role="status" aria-busy="true" className="space-y-4">
+        <span className="sr-only">Loading settings…</span>
+        <Skeleton className="h-10 w-64" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Settings</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Every Echo's behaviour. Changes apply from the next request, with no restart.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" data-testid="settings-version">
+            v{document.version}
+          </Badge>
+          <Button variant="outline" onClick={() => setHistoryOpen(true)}>
+            <HistoryIcon aria-hidden="true" /> History
+          </Button>
+        </div>
+      </header>
+
+      {conflictVersion !== null && (
+        <Alert>
+          <AlertTitle>These settings changed in another tab</AlertTitle>
+          <AlertDescription>
+            {`The document moved past v${conflictVersion}. Your unsaved values are kept — reapply them to v${document.version}, or discard them.`}
+            <span className="mt-2 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleSave}
+                disabled={save.isPending || document.version === conflictVersion}
+              >
+                Reapply my changes
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={discard}>
+                Discard mine
+              </Button>
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-[170px_minmax(0,1fr)]">
+        <nav aria-label="Settings sections" className="hidden lg:block">
+          <ul className="sticky top-6 space-y-0.5 text-sm">
+            {SETTING_SECTIONS.map((section) => (
+              <li key={section}>
+                <a
+                  href={`#section-${section}`}
+                  className="flex min-h-9 items-center justify-between gap-2 rounded-md px-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  {SETTINGS_SECTION_LABELS[section]}
+                  {descriptorsOfSection(section).some((descriptor) => dirtySet.has(descriptor.key)) && (
+                    <>
+                      <span aria-hidden="true" className="size-2 rounded-full bg-signal" />
+                      <span className="sr-only">unsaved changes</span>
+                    </>
+                  )}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+
+        <div className="min-w-0 space-y-4">
+          {SETTING_SECTIONS.map((section) => {
+            const descriptors = descriptorsOfSection(section);
+            return (
+              <SettingsSection
+                key={section}
+                section={section}
+                descriptors={descriptors}
+                values={draft}
+                errors={errors}
+                models={models.data?.models ?? []}
+                hasKeys={document.hasKeys}
+                dirty={descriptors.some((descriptor) => dirtySet.has(descriptor.key))}
+                overriddenBy={overriddenBy.get(section)}
+                onChange={setValue}
+                onResetToDefault={(key) => setValue(key, SETTING_BY_KEY.get(key)?.default ?? null)}
+                collapsed={isPhone}
+                footer={
+                  section === 'assistant' ? (
+                    <Button type="button" variant="outline" onClick={() => setPromptOpen(true)}>
+                      <FileTextIcon aria-hidden="true" /> Show the full prompt
+                    </Button>
+                  ) : section === 'voice' ? (
+                    <VoiceTestPhrase devices={deviceList} voice={voicePreview} />
+                  ) : section === 'advanced' ? (
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        Reconnect and ping timings apply when a link next reconnects. Use this after changing
+                        them.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={reconnect.isPending || deviceList.length === 0}
+                        onClick={() => {
+                          const targets = deviceList.filter((device) => device.enabled);
+                          if (targets.length === 0) return;
+                          for (const device of targets) reconnect.mutate(device.id);
+                          toast.success(
+                            `Reconnecting ${targets.length === 1 ? '1 Echo' : `${targets.length} Echos`}…`,
+                          );
+                        }}
+                      >
+                        <RefreshCwIcon aria-hidden="true" /> Reconnect all Echos now
+                      </Button>
+                    </div>
+                  ) : undefined
+                }
+              />
+            );
+          })}
+
+          <SaveBar count={dirty.length} saving={save.isPending} onDiscard={discard} onSave={handleSave} />
+        </div>
+      </div>
+
+      <SettingsHistoryDialog
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        devices={deviceList}
+        onReverted={(next) => admit(next, setDraft, setBaseline, seededVersion)}
+      />
+      <FullPromptDialog open={promptOpen} onOpenChange={setPromptOpen} />
+    </div>
+  );
+}
+
+/** The draft starts at the resolved values; a secret's value never reaches the browser. */
+function seed(document: SettingsDocument): FormValues {
+  return { ...document.effective, 'openai.apiKey': '' };
+}
+
+function admit(
+  document: SettingsDocument,
+  setDraft: (values: FormValues) => void,
+  setBaseline: (values: FormValues) => void,
+  seededVersion: RefObject<number | null>,
+) {
+  const next = seed(document);
+  seededVersion.current = document.version;
+  setDraft(next);
+  setBaseline(next);
+}
+
+function focusFirst(errors: Record<string, string>): void {
+  const first = SETTING_DESCRIPTORS.find((descriptor) => descriptor.key in errors);
+  if (first) focusField(first.key);
+}

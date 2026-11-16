@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Cortecho">
+  <title>Cortecho</title>
+  <desc>A brain inside an Echo: an amber ring open like the letter C, with folds that also read as sound waves.</desc>
+  <!--
+    Cortecho's mark. The Echo Dot seen from above is a ring; the ring is open
+    on the right so it also reads as the letter C. The three folds inside read
+    as a brain and as sound waves echoing back. One stroke weight, no
+    gradients, legible at 16 px. Colours are the app palette in index.css.
+  -->
+  <rect width="512" height="512" rx="112" fill="#1b2337"/>
+  <path
+    d="M 342 379 A 150 150 0 1 1 342 133"
+    fill="none"
+    stroke="#f2b443"
+    stroke-width="48"
+    stroke-linecap="round"
+  />
+  <g fill="none" stroke-width="20" stroke-linecap="round">
+    <path d="M 190 212 C 228 176 296 190 314 236" stroke="#e9edf2"/>
+    <path d="M 178 272 C 218 242 282 258 328 286" stroke="#7fb5b5"/>
+    <path d="M 204 324 C 238 302 286 310 318 332" stroke="#e9edf2"/>
+  </g>
+</svg>

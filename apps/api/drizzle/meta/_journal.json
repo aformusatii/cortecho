@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1794145858108,
+      "tag": "0000_create_turns",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1794607431485,
+      "tag": "0001_skinny_kabuki",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794749553529,
+      "tag": "0002_wealthy_sasquatch",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1794751328161,
+      "tag": "0003_parched_lyja",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+services:
+  app:
+    image: ghcr.io/aformusatii/cortecho:latest
+    # One file for the install: secrets and the first-start settings. Optional,
+    # so an existing deployment that passes variables another way still starts.
+    env_file:
+      - path: ./cortecho.env
+        required: false
+    ports:
+      # Compose interpolates APP_PORT from the shell or .env, not from env_file.
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_PATH: /app/data/app.db
+    volumes:
+      # The SQLite database (plus its -wal/-shm files) survives
+      # `docker compose down` and image upgrades. The directory must be
+      # writable by uid 1000 (the image's `node` user). DATA_DIR only needs
+      # to be set when the Docker daemon runs on another filesystem than this
+      # checkout (e.g. Docker-outside-of-Docker from a dev container).
+      - ${DATA_DIR:-./data}:/app/data
+    restart: unless-stopped
+    # Gives the graceful shutdown in server.ts time to close the database.
+    stop_grace_period: 15s

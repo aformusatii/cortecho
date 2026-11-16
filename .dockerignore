@@ -1,0 +1,23 @@
+node_modules
+**/node_modules
+**/dist
+**/dev-dist
+data/*.db*
+.git
+test-results
+playwright-report
+docs/screenshots
+.env
+cortecho.env
+SystemPrompt.md
+AGENTS.local.md
+specs
+# Secrets must never end up in the image (Dockerfile does COPY . .).
+secrets.yaml
+secrets.*
+echo-dot-assist
+*.key
+*.pem
+*.wav
+data
+prompt.md
