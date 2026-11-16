@@ -128,7 +128,8 @@ Details that matter:
   privately.
 - **The household prompt** is the first instruction layer. The built-in answer
   rules and the search policy are code-owned. **Show the full prompt** displays
-  the assembled layers.
+  the assembled layers. For a first start, copy `SystemPrompt.example.md` to
+  `SystemPrompt.md`; it is imported once and then ignored.
 - **Per-Echo overrides** are tri-state: off means *inherit*, not a copy. The
   row shows the inherited global value.
 - **One version counter** covers global and per-Echo changes. A form carries
