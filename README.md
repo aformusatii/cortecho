@@ -21,7 +21,7 @@ ESPHome native API to `hassmic` on the device, turns speech into text, runs an
 agent, and sends the answer back as audio the Echo plays. One instance can
 serve several Echos.
 
-![The status page](docs/screenshots/desktop-status.png)
+![The status page of a running Cortecho](docs/screenshots/live-status.png)
 
 ## Why an Echo Dot?
 
