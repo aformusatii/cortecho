@@ -156,7 +156,8 @@ export function createMcpRoutes(runtime: VoiceRuntime) {
         clientIdChanged ||
         body.clientSecret !== undefined ||
         authType !== before.authType ||
-        oauthConfig.registration !== currentOauth.registration;
+        oauthConfig.registration !== currentOauth.registration ||
+        oauthConfig.authorizationServer !== currentOauth.authorizationServer;
       const write: McpServerWrite = {
         slug: before.slug,
         name: body.name ?? before.name,

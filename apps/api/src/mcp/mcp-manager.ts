@@ -116,7 +116,7 @@ export class McpManager {
     connection.setRow(after);
     if (!after.enabled) await connection.stop();
     else if (linkChanged) await connection.reconnect();
-    else await connection.start();
+    else if (!connection.startedEver || connection.state === 'disabled') await connection.start();
   }
 
   async remove(id: number): Promise<void> {
@@ -212,6 +212,7 @@ export class McpManager {
           .filter((tool) => tool.serverId !== serverId)
           .map((tool) => tool.exposedName),
       );
+      for (const tool of existing) takenExposed.add(tool.exposedName);
       const at = new Date().toISOString();
 
       for (const item of listed) {
