@@ -1,12 +1,13 @@
 # Configuration
 
-Cortecho has three layers. Know which one you are changing, because they are
-read at different times.
+Cortecho has three layers, plus connectors. Know which one you are changing,
+because they are read at different times.
 
 | Layer | Where it lives | How to change it | When it applies |
 |---|---|---|---|
 | **Settings** (behaviour) | SQLite (`data/app.db`), per Echo overrides in `devices.overrides` | Web UI under **Settings** and **Echos → Tuning**, or `GET/PATCH /api/settings` and `GET/PATCH /api/devices/:id/settings` | From the next turn (link timings from the next connect) |
 | **Echoes** | SQLite (`devices`) | Web UI under **Echos** | Immediately (the link restarts when host, port, key or enabled changes) |
+| **Connectors** | SQLite (`mcp_servers`, `mcp_credentials`, `mcp_tools`) | Web UI under **Settings → Connectors** and the Echo's **Connectors** tab | Immediately; a new tool is offered on the next turn |
 | **Environment** | Process environment (`cortecho.env`, compose, shell) | Edit the file and restart the container | At every start |
 
 > **The most common mistake:** changing a behaviour value in `cortecho.env`
@@ -40,6 +41,10 @@ has no authentication).
 | `HOME_ASSISTANT_ALLOWED_SERVICES` | *(none)* | Services `home_assistant_call_service` may call |
 | `SHELL_TOOL_SCRIPTS` | `{}` | JSON: named scripts for `run_script` (destructive) |
 | `TOOLS_FILE` | *(unset)* | Path to a JSON file with `httpToolEndpoints` and `shellToolScripts`; an alternative to JSON inside an env var |
+| `PUBLIC_BASE_URL` | *(empty)* | The URL the owner's **browser** uses for Cortecho (e.g. `https://echo-agent.example.com`). OAuth's redirect URI is `${PUBLIC_BASE_URL}/api/mcp/oauth/callback`; empty falls back to the request origin |
+| `CORTECHO_SECRET_KEY` | *(unset)* | Base64 of 32 random bytes; encrypts connector headers, client secrets and OAuth tokens at rest (AES-256-GCM). Losing it means signing in to every connector again |
+| `MCP_ALLOWED_ORIGINS` | *(none)* | Comma-separated extra browser origins allowed to call the connector write routes (CSRF guard; requests without `Origin`, such as curl, are allowed) |
+| `MCP_CIMD_ENABLED` | `false` | Serve the Client ID Metadata Document at `/api/mcp/oauth/client-metadata.json` (needs a publicly reachable path) |
 
 `HTTP_TOOL_ENDPOINTS` and `SHELL_TOOL_SCRIPTS` are JSON in an environment
 variable, which is easy to break with quoting. `TOOLS_FILE` accepts a file
@@ -78,6 +83,14 @@ The registry in `packages/shared/src/settings.registry.ts` is the contract: it
 defines validation, defaults and the generated UI. Every key can be overridden
 per Echo when the **Per Echo** column says yes.
 
+**Connectors are a fourth kind of state.** The MCP server rows, their OAuth
+credentials and their tool policies live in SQLite next to these settings but
+are *not* part of the versioned settings document: each connector saves on its
+own, because OAuth and tool syncs are runtime operations. See
+[connectors.md](connectors.md). `connectors.enabled` and
+`connectors.confirmWindowS` are ordinary settings; `connectors.disabled` is the
+per-Echo list edited on the Echo's **Connectors** tab (hidden from Tuning).
+
 | Key | Label | Default | Env (import only) | Per Echo |
 |---|---|---|---|---|
 | `assistant.householdPrompt` | Household prompt | (empty) | — | no |
@@ -94,6 +107,9 @@ per Echo when the **Per Echo** column says yes.
 | `agent.webSearch` | Web search | `true` | `AGENT_WEB_SEARCH_ENABLED` | no |
 | `agent.maxOutputTokens` | Maximum answer length | `2000` | `AGENT_MAX_OUTPUT_TOKENS` | no |
 | `agent.maxToolRounds` | Maximum tool rounds | `4` | `AGENT_MAX_TOOL_ROUNDS` | no |
+| `connectors.enabled` | Connected services | `true` | — | no |
+| `connectors.disabled` | Disabled connectors | `[]` | — | yes |
+| `connectors.confirmWindowS` | Confirmation window | `60` | — | no |
 | `tts.model` | Text-to-speech model | `gpt-4o-mini-tts` | `TTS_MODEL` | no |
 | `tts.voice` | Voice | `marin` | `TTS_VOICE` | yes |
 | `tts.speed` | Speed | `1` | `TTS_SPEED` | yes |

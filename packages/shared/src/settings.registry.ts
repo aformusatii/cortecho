@@ -70,6 +70,8 @@ export type SettingDescriptor = {
   secret?: boolean;
   applies: 'next-turn' | 'next-connect';
   advanced?: boolean;
+  /** Stored and validated, but rendered by a dedicated screen (connectors). */
+  hidden?: boolean;
   /** The old environment variable, for the one-time import. */
   env?: string;
 };
@@ -301,6 +303,44 @@ const settings: readonly SettingDescriptor[] = [
     perEcho: false,
     applies: 'next-turn',
     env: 'AGENT_MAX_TOOL_ROUNDS',
+  },
+  {
+    key: 'connectors.enabled',
+    section: 'thinking',
+    label: 'Connected services',
+    help: 'Offer the tools of connected services (Settings → Connectors) to the agent. Off = no connector tools for anyone.',
+    schema: z.boolean(),
+    default: true,
+    control: 'switch',
+    perEcho: false,
+    applies: 'next-turn',
+  },
+  {
+    key: 'connectors.disabled',
+    section: 'thinking',
+    label: 'Disabled connectors',
+    help: 'Connectors this Echo may not use. Edit the list on the Echo’s Connectors tab.',
+    schema: z.array(z.string().regex(/^[a-z][a-z0-9]{1,15}$/)).max(50),
+    default: [],
+    control: 'tags',
+    perEcho: true,
+    applies: 'next-turn',
+    hidden: true,
+  },
+  {
+    key: 'connectors.confirmWindowS',
+    section: 'thinking',
+    label: 'Confirmation window',
+    help: 'How long a “confirm by voice” request stays valid while the user answers yes or no.',
+    schema: z.number().int().min(10).max(600),
+    min: 10,
+    max: 600,
+    step: 5,
+    default: 60,
+    control: 'number',
+    unit: 's',
+    perEcho: false,
+    applies: 'next-turn',
   },
   // --- Voice ----------------------------------------------------------------
   {
@@ -739,6 +779,7 @@ export type Settings = {
     maxOutputTokens: number;
     maxToolRounds: number;
   };
+  connectors: { enabled: boolean; disabled: string[]; confirmWindowS: number };
   tts: { model: string; voice: string; speed: number; instructions: string; outputRate: number };
   followUp: { mode: FollowUpMode; questionMarkFallback: boolean; minWaitMs: number; maxWaitMs: number };
   vad: {
@@ -785,6 +826,11 @@ export function buildSettings(values: Readonly<Record<string, unknown>>): Settin
       webSearch: get('agent.webSearch'),
       maxOutputTokens: get('agent.maxOutputTokens'),
       maxToolRounds: get('agent.maxToolRounds'),
+    },
+    connectors: {
+      enabled: get('connectors.enabled'),
+      disabled: get('connectors.disabled'),
+      confirmWindowS: get('connectors.confirmWindowS'),
     },
     tts: {
       model: get('tts.model'),

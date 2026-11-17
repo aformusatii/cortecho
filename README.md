@@ -61,6 +61,9 @@ is done once.
   agent → natural voice.
 - **Tools**: the model can call your scripts, HTTP endpoints, Home Assistant
   and a built-in web search.
+- **MCP connectors**: connect Gmail, Google Calendar, Home Assistant or any MCP
+  server in **Settings → Connectors**, choose which tools are automatic and
+  which need a spoken yes, and limit them per Echo. No restart.
 - **Follow-up questions** without repeating the wake word; the model decides
   when to listen again.
 - **Announcements** over HTTP: `POST /api/say` speaks on one Echo or all of
@@ -173,6 +176,10 @@ documentation, and add a test. Tools marked `destructive` are hidden from the
 model and refused unless their name is in `TOOLS_ALLOW_DESTRUCTIVE`. See
 [development](docs/development.md#adding-a-tool).
 
+For a service that already speaks MCP, there is no code to write: add it under
+**Settings → Connectors** and choose its tools. See
+[connectors](docs/connectors.md).
+
 ## FAQ
 
 **Can I use an Echo Dot without Amazon?** Yes. `echo-dot-assist` roots the
@@ -215,6 +222,7 @@ Amazon, Echo and Alexa are trademarks of Amazon.com, Inc.
 - [How a turn works](docs/protocol.md)
 - [Speed and measurements](docs/performance.md)
 - [Configuration](docs/configuration.md)
+- [Connectors (MCP servers)](docs/connectors.md)
 - [Deployment](docs/deployment.md)
 - [Echo setup](docs/echo-setup.md)
 - [Troubleshooting](docs/troubleshooting.md)
@@ -243,7 +251,8 @@ Report another model with the **Device report** issue template. Cortecho needs
 - **No timers, media player, light ring, Bluetooth or Drop In.** Cortecho
   subscribes only to the voice assistant.
 - Roadmap: Realtime API mode, example tools (timer, weather, webhook), persona
-  files, MCP tools, a tested fully local recipe, and a device matrix.
+  files, `stdio` MCP servers, MCP resources, a tested fully local recipe, and a
+  device matrix.
 
 ## Related projects
 

@@ -8,6 +8,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import type { Db } from './db/client.ts';
 import { createDevicesRoutes } from './features/devices/devices.routes.ts';
 import { createDoctorRoutes } from './features/doctor/doctor.routes.ts';
+import { createMcpRoutes } from './features/mcp/mcp.routes.ts';
 import { createSettingsRoutes } from './features/settings/settings.routes.ts';
 import { buildHealth, createVoiceRoutes } from './features/voice/voice.routes.ts';
 import type { VoiceRuntime } from './features/voice/voice-runtime.ts';
@@ -88,6 +89,7 @@ export function createApp({ db, voice, enableCors = false, logRequests = false, 
   app.route('/api', createVoiceRoutes(voice));
   app.route('/api', createDevicesRoutes(voice));
   app.route('/api', createSettingsRoutes(voice));
+  app.route('/api', createMcpRoutes(voice));
   app.route('/api', createDoctorRoutes(voice));
 
   // Unknown API paths get a JSON 404 here, so they never fall through to the

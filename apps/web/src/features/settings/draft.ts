@@ -93,5 +93,7 @@ export function formatBounds(descriptor: SettingDescriptor): string {
 
 /** All descriptors of one section, in registry order. */
 export function descriptorsOfSection(section: string): SettingDescriptor[] {
-  return SETTING_DESCRIPTORS.filter((descriptor) => descriptor.section === section);
+  return SETTING_DESCRIPTORS.filter(
+    (descriptor) => descriptor.section === section && descriptor.hidden !== true,
+  );
 }

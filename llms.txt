@@ -11,7 +11,8 @@ Amazon.com, Inc.
 - [README](README.md): what it is, why an Echo Dot, quick start, FAQ.
 - [Protocol](docs/protocol.md): how a turn works, ESPHome messages, follow-ups.
 - [Performance](docs/performance.md): where the answer latency goes.
-- [Configuration](docs/configuration.md): the three layers, every setting.
+- [Configuration](docs/configuration.md): the layers, every setting.
+- [Connectors](docs/connectors.md): MCP servers, OAuth, tool policies.
 - [Deployment](docs/deployment.md): Docker, ports, backups.
 - [Echo setup](docs/echo-setup.md): echo-dot-assist, API key, clock, wake word.
 - [Troubleshooting](docs/troubleshooting.md): symptom and fix.

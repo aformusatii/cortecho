@@ -53,8 +53,9 @@ function TurnItem({ turn }: { turn: Turn }) {
               ) : (
                 <>
                   <WrenchIcon aria-hidden="true" className="size-3" />
-                  {call.name}
-                  {!call.ok && ' (failed)'} · {call.durationMs} ms
+                  {call.server ? `${call.server} · ${call.name.replace(`${call.server}__`, '')}` : call.name}
+                  {call.pending && ' · awaiting your yes'}
+                  {!call.ok && !call.pending && ' (failed)'} · {call.durationMs} ms
                 </>
               )}
             </li>

@@ -51,6 +51,34 @@ Hosts must be private LAN or loopback (`10/8`, `172.16/12`, `192.168/16`,
 `127/8`). Public addresses, link-local, multicast, `0.0.0.0` and IPv6 are
 rejected.
 
+## Connectors (MCP servers)
+
+Secrets are write-only: responses carry `hasHeaders` and `hasClientSecret`,
+never a value. Write routes (`POST`/`PATCH`/`DELETE`) refuse a browser request
+whose `Origin` is not this app (`MCP_ALLOWED_ORIGINS` adds origins); requests
+without an `Origin`, such as curl, are allowed.
+
+| Method | Path | What |
+|---|---|---|
+| `GET` | `/api/mcp/catalog` | The Add dialog's catalog entries and whether `CORTECHO_SECRET_KEY` is set |
+| `GET` | `/api/mcp/servers` | Connectors with runtime state, auth state and tool counts |
+| `POST` | `/api/mcp/servers` | Create from `{name, slug, url, transport?, authType, headers?, oauthConfig?, clientSecret?, timeoutMs?, maxResultChars?, description?, enabled?}` |
+| `GET` | `/api/mcp/servers/:id` | One connector plus every tool and its policy |
+| `PATCH` | `/api/mcp/servers/:id` | Any create field. Changing the URL or OAuth client deletes the stored credentials |
+| `DELETE` | `/api/mcp/servers/:id` | Close the connection, revoke OAuth when supported, delete rows |
+| `POST` | `/api/mcp/servers/:id/reconnect` | Restart the link |
+| `POST` | `/api/mcp/servers/:id/oauth/start` | Begin a flow; `{authorizationUrl}` opens in a new tab |
+| `GET` | `/api/mcp/oauth/callback?code&state&iss` | Browser redirect target; validates state and issuer, then `302` to `/settings?tab=connectors&server=<id>&auth=ok` |
+| `POST` | `/api/mcp/oauth/complete` | `{callbackUrl}` manual fallback for a localhost redirect |
+| `POST` | `/api/mcp/servers/:id/oauth/disconnect` | Revoke when possible and delete the account |
+| `POST` | `/api/mcp/servers/:id/tools/refresh` | Re-run `tools/list` now |
+| `PATCH` | `/api/mcp/servers/:id/tools` | `{policies: {tool: "off"\|"auto"\|"confirm"}}`; approves the current definition |
+| `POST` | `/api/mcp/servers/:id/tools/:name/try` | `{arguments, confirm?}` runs one tool from the UI; write tools need `confirm: true` |
+| `GET` | `/api/mcp/oauth/client-metadata.json` | The CIMD document, when `MCP_CIMD_ENABLED=true` |
+
+`GET /api/health` also has `connectors: [{slug, state, authState}]`. See
+[connectors.md](connectors.md) for the policy and OAuth rules.
+
 ## Settings
 
 | Method | Path | What |

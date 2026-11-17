@@ -30,6 +30,7 @@ export function buildHealth(runtime: VoiceRuntime): Health {
       ttsModel: settings.tts.model,
     },
     tools: [...tools.names, ...(settings.agent.webSearch ? ['web_search'] : [])],
+    connectors: runtime.mcp.health(),
     settingsVersion: version,
     lastTurn: turns.latest(1)[0] ?? null,
   };
@@ -137,6 +138,7 @@ export function createVoiceRoutes(runtime: VoiceRuntime) {
                 turns: runtime.turns,
                 sessions: runtime.sessions,
                 snapshot: runtime.settings.current(),
+                tools: runtime.tools,
               }),
             });
           }

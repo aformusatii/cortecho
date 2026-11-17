@@ -34,10 +34,35 @@ function write(
   extra?: Record<string, unknown>,
 ) {
   if (LEVELS.indexOf(level) < threshold) return;
-  const suffix = extra && Object.keys(extra).length > 0 ? ` ${JSON.stringify(extra)}` : '';
-  const line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} [${component}] ${message}${suffix}`;
+  const safeExtra = extra === undefined ? undefined : (redactValue(extra) as Record<string, unknown>);
+  const suffix = safeExtra && Object.keys(safeExtra).length > 0 ? ` ${JSON.stringify(safeExtra)}` : '';
+  const line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} [${component}] ${redactText(message)}${suffix}`;
   if (level === 'error' || level === 'warn') console.error(line);
   else console.log(line);
+}
+
+/** Keys whose values must never reach a log line (OAuth, headers, API keys). */
+const SECRET_KEY =
+  /authorization|access[-_]?token|refresh[-_]?token|id[-_]?token|client[-_]?secret|api[-_]?key|password|secret/i;
+
+/** Recursively replaces secret-named values; also used by the redaction test. */
+export function redactValue(value: unknown, key = ''): unknown {
+  if (SECRET_KEY.test(key)) return '[redacted]';
+  if (Array.isArray(value)) return value.map((item) => redactValue(item));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([name, item]) => [name, redactValue(item, name)]),
+    );
+  }
+  return typeof value === 'string' ? redactText(value) : value;
+}
+
+/** Removes OAuth codes/states/tokens from free text (URLs and error messages). */
+export function redactText(text: string): string {
+  return text.replace(
+    /\b(code|state|access_token|refresh_token|id_token|client_secret|api_key)=([^&\s"']+)/gi,
+    '$1=[redacted]',
+  );
 }
 
 export function createLogger(component: string): Logger {

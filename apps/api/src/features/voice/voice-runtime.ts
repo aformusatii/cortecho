@@ -1,5 +1,6 @@
 import type { DoctorReport } from '@cortecho/shared';
 import type { Config } from '../../config.ts';
+import type { McpManager } from '../../mcp/mcp-manager.ts';
 import type { AgentSessions } from '../../pipeline/agent-sessions.ts';
 import type { ReplyAudioStore } from '../../pipeline/reply-audio.ts';
 import type { VoiceServices } from '../../pipeline/services.ts';
@@ -15,6 +16,8 @@ export type VoiceRuntime = {
   services: VoiceServices;
   tools: ToolRegistry;
   turns: TurnsRepository;
+  /** Connector runtime: one MCP connection per server row. */
+  mcp: McpManager;
   /** Global settings plus every device's overrides. */
   settings: SettingsStore;
   /** Conversation memory for every speaker (device:<id> and web). */

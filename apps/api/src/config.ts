@@ -142,6 +142,16 @@ export function loadConfig() {
       },
       enableEchoTool: bool('TOOLS_ENABLE_ECHO', true),
     },
+    mcp: {
+      /** The browser-facing URL for OAuth redirects. Empty = derive from the request origin. */
+      publicBaseUrl: (optionalStr('PUBLIC_BASE_URL') ?? '').replace(/\/+$/, ''),
+      /** AES-256-GCM key for connector secrets. Missing = no headers/OAuth connectors. */
+      secretKey: optionalStr('CORTECHO_SECRET_KEY'),
+      /** Extra browser origins allowed to call the connector write routes. */
+      allowedOrigins: list('MCP_ALLOWED_ORIGINS'),
+      /** Client ID Metadata Document support (needs the public path to be reachable). */
+      cimdEnabled: bool('MCP_CIMD_ENABLED', false),
+    },
   };
 }
 

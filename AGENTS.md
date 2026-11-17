@@ -104,12 +104,39 @@ docs/                     user and contributor documentation
   run `npm run build -w @cortecho/web` to regenerate `routeTree.gen.ts` before
   typechecking) and the page + queries/components in
   `apps/web/src/features/<name>/`. Query keys are namespaced (`['settings']`,
-  `['devices']`, `['devices', id]`, `['status']`); a write invalidates the
-  namespaces it touches. Keep secrets write-only (`hasKey`) and use
-  `apiRequest` + `ApiError.fields` for form errors.
+  `['devices']`, `['devices', id]`, `['status']`, `['mcp']`); a write
+  invalidates the namespaces it touches. Keep secrets write-only (`hasKey`) and
+  use `apiRequest` + `ApiError.fields` for form errors.
+- **New connector type:** one entry in `packages/shared/src/mcp.catalog.ts`
+  (URL, auth quirks, scopes, guide anchor) and a `docs/connectors.md` section.
+  No new code: the Add dialog and the form are generated from the catalog.
 - **Realtime API mode:** a new implementation next to `pipeline/openai.ts`
   behind a `PIPELINE_MODE` setting; keep the turn-based pipeline as the
   fallback. Needed before `gpt-4o-mini-tts` shuts down on 2027-01-06.
+
+## MCP connector invariants (do not break)
+
+- **One connection per server row.** Never open a second `McpConnection` for the
+  same `mcp_servers` row; the manager owns the runtime map.
+- **Connections open at startup and after a change, never during a turn.** A
+  turn reads a memory-only tool snapshot. A connector that is down is left out
+  of that turn (the prompt marks it unavailable).
+- **Tool snapshot per turn.** `ToolRegistry.snapshot({settings, deviceId})` is
+  taken where the settings snapshot is taken. A mid-turn connector change does
+  not change the turn.
+- **Secrets never leave the database decrypted.** `headers_enc`,
+  `oauth_client_secret_enc` and the credential columns are encrypted with
+  `CORTECHO_SECRET_KEY` (AES-256-GCM). Responses expose only `hasHeaders` /
+  `hasClientSecret`; never log token payloads, tool arguments or results at
+  `info`.
+- **Confirm is a code barrier, not a prompt rule.** A `confirm` tool stores a
+  pending action on the speaker's session and refuses the same turn; only a
+  later turn with the same arguments may run it.
+- **Definition pinning.** A changed tool hash is `off` until the owner approves
+  it; a tool added after the first sync starts `off` and is marked new.
+- **`stdio` is environment-only.** Do not add a UI path that runs commands.
+- **The URL policy is checked on save and on every connect** (HTTPS, LAN-only
+  plain HTTP, no link-local/metadata, no Echo ports, DNS resolved).
 
 ## Protocol invariants (do not break)
 

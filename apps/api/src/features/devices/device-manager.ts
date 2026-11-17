@@ -10,6 +10,7 @@ import type { AgentSessions } from '../../pipeline/agent-sessions.ts';
 import type { ReplyAudioStore } from '../../pipeline/reply-audio.ts';
 import type { VoiceServices } from '../../pipeline/services.ts';
 import { VoicePipeline } from '../../pipeline/voice-pipeline.ts';
+import type { ToolRegistry } from '../../tools/registry.ts';
 import type { SettingsStore } from '../settings/settings-store.ts';
 import type { TurnsRepository } from '../turns/turns.repository.ts';
 import type { Device, DevicesRepository } from './devices.repository.ts';
@@ -34,6 +35,8 @@ export type DeviceManagerOptions = {
   replies: ReplyAudioStore;
   sessions: AgentSessions;
   config: Pick<Config, 'reply' | 'debug'>;
+  /** Plugins + connectors, snapshotted per turn. */
+  tools: ToolRegistry;
 };
 
 /** POST /api/devices/:id/accept-device without a reported name. */
@@ -220,7 +223,7 @@ export class DeviceManager {
   // -------------------------------------------------------------------------
 
   private createRuntime(device: Device): DeviceRuntime {
-    const { settings, config, services, turns, replies, sessions } = this.options;
+    const { settings, config, services, turns, replies, sessions, tools } = this.options;
     let apiKey: Buffer | null = null;
     if (device.apiKey) {
       try {
@@ -261,6 +264,7 @@ export class DeviceManager {
       },
       // Without REPLY_AUDIO_BASE_URL: this machine as the Echo's connection sees it.
       fallbackReplyBaseUrl: () => `http://${client.localAddress ?? '127.0.0.1'}:${env.PORT}`,
+      tools,
     });
     const runtime: DeviceRuntime = { device, client, pipeline, reportedNodeName: null };
 

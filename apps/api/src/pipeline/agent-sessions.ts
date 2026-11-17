@@ -1,9 +1,28 @@
 import type { ResponseItem } from './agent.ts';
 
+/**
+ * A “confirm by voice” action waiting for the user's yes. It lives on the
+ * speaker's session, so injected text read in turn N cannot produce the
+ * spoken yes of turn N and run the action.
+ */
+export type PendingAction = {
+  exposedName: string;
+  /** Canonical JSON of the arguments; a different call is a new action. */
+  argsHash: string;
+  argumentsJson: string;
+  /** The session turn that created it: only a later turn may run it. */
+  createdTurn: number;
+  expiresAt: number;
+};
+
 /** One conversation: the replayed input items and when the last turn happened. */
 export type AgentSession = {
   history: ResponseItem[];
   lastTurnAt: number;
+  /** Monotonic counter of agent replies in this conversation. */
+  turnSeq?: number;
+  /** At most one pending action; different arguments replace it. */
+  pendingAction?: PendingAction | null;
 };
 
 /**
@@ -21,7 +40,12 @@ export class AgentSessions {
     if (existing && now - existing.lastTurnAt > idleMs) {
       this.sessions.delete(key);
     }
-    const session = this.sessions.get(key) ?? { history: [], lastTurnAt: 0 };
+    const session = this.sessions.get(key) ?? {
+      history: [],
+      lastTurnAt: 0,
+      turnSeq: 0,
+      pendingAction: null,
+    };
     session.lastTurnAt = now;
     this.sessions.set(key, session);
     return session;

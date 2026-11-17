@@ -8,6 +8,8 @@ import type { Config } from '../config.ts';
 import type { Device } from '../features/devices/devices.repository.ts';
 import { isPrivateIpv4 } from '../features/devices/host.ts';
 import type { SettingsStore } from '../features/settings/settings-store.ts';
+import { parseSecretKey } from '../lib/secret-box.ts';
+import { effectivePolicy, type McpManager, reviewReason } from '../mcp/mcp-manager.ts';
 import { type EchoProbeResult, probeEcho } from './probe.ts';
 
 export type DoctorInput = {
@@ -16,6 +18,8 @@ export type DoctorInput = {
   devices: Device[];
   /** Production enables the hard checks (e.g. a missing reply address). */
   production: boolean;
+  /** Connector runtime and rows (optional: the CLI and old tests omit it). */
+  mcp?: McpManager;
   env?: NodeJS.ProcessEnv;
   /** For tests: replace the network probes. */
   probe?: typeof probeEcho;
@@ -107,6 +111,7 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
 
   checks.push(await replyCheck(config, devices, production, fetchImpl));
   checks.push(await openAiCheck(settings, config, fetchImpl));
+  checks.push(...connectorChecks(config, input.mcp));
 
   if (input.localBaseUrl && input.sayText) {
     checks.push(await sayCheck(input.localBaseUrl, input.sayText, fetchImpl));
@@ -290,4 +295,125 @@ async function sayCheck(baseUrl: string, text: string, fetchImpl: typeof fetch):
       'Start the app first; the doctor does not open its own Echo link.',
     );
   }
+}
+
+/** Connector diagnostics: key, public URL, link state, review flags and tool budget. */
+function connectorChecks(config: Config, mcp: McpManager | undefined): DoctorCheck[] {
+  if (!mcp) return [];
+  const rows = mcp.rows();
+  if (rows.length === 0) return [check('connectors', 'skip', 'No connector is configured.')];
+
+  const checks: DoctorCheck[] = [];
+  let keyOk = false;
+  let keyError: string | null = null;
+  try {
+    keyOk = parseSecretKey(config.mcp.secretKey) !== null;
+  } catch (error) {
+    keyError = error instanceof Error ? error.message : 'CORTECHO_SECRET_KEY is invalid.';
+  }
+  const needsSecrets = rows.some((row) => row.authType !== 'none');
+  if (keyOk) {
+    checks.push(check('connector key', 'pass', 'CORTECHO_SECRET_KEY is set (value never printed).'));
+  } else {
+    checks.push(
+      check(
+        'connector key',
+        keyError || needsSecrets ? 'fail' : 'warn',
+        keyError ??
+          (needsSecrets
+            ? 'CORTECHO_SECRET_KEY is missing, so connectors with headers or OAuth cannot work.'
+            : 'CORTECHO_SECRET_KEY is missing; connectors without authentication still work.'),
+        'Generate 32 random bytes (openssl rand -base64 32) and set CORTECHO_SECRET_KEY.',
+      ),
+    );
+  }
+
+  const oauthRows = rows.filter((row) => row.authType === 'oauth');
+  if (oauthRows.length > 0) {
+    const stored = oauthRows.filter((row) => mcp.repository.hasStoredTokens(row.id));
+    const unreadable = stored.filter((row) => !mcp.repository.credentials(row.id)?.tokens);
+    if (stored.length > 0) {
+      checks.push(
+        unreadable.length === 0
+          ? check(
+              'connector secrets',
+              'pass',
+              `${stored.length} stored token set(s) decrypt with the current key.`,
+            )
+          : check(
+              'connector secrets',
+              'fail',
+              `${unreadable.map((row) => row.slug).join(', ')} cannot be decrypted: CORTECHO_SECRET_KEY changed or is wrong.`,
+              'Restore the key the tokens were stored with, or sign in to those connectors again.',
+            ),
+      );
+    }
+    let valid = false;
+    try {
+      valid = Boolean(config.mcp.publicBaseUrl) && Boolean(new URL(config.mcp.publicBaseUrl));
+    } catch {
+      valid = false;
+    }
+    checks.push(
+      valid
+        ? check('connector redirect URI', 'pass', `${config.mcp.publicBaseUrl}/api/mcp/oauth/callback`)
+        : check(
+            'connector redirect URI',
+            'warn',
+            'PUBLIC_BASE_URL is not set; OAuth flows fall back to the request origin.',
+            'Set it to the browser-facing URL (for example https://echo-agent.example.com).',
+          ),
+    );
+  }
+
+  let offered = 0;
+  for (const row of rows) {
+    if (!row.enabled) {
+      checks.push(check(`connector ${row.slug}`, 'skip', 'Disabled.'));
+      continue;
+    }
+    const connection = mcp.connection(row.id);
+    const live = connection?.startedEver ?? false;
+    const tools = mcp.repository.tools(row.id).filter((tool) => tool.present);
+    const enabled = tools.filter((tool) => effectivePolicy(tool) !== 'off').length;
+    const review = tools.filter((tool) => reviewReason(tool) !== null).length;
+    offered += enabled;
+    const state = live ? (connection?.state ?? 'connecting') : null;
+    const detail = mcp.repository.statusDetail(row);
+    checks.push(
+      check(
+        `connector ${row.slug}`,
+        state === null
+          ? detail.lastError
+            ? 'warn'
+            : 'skip'
+          : state === 'connected'
+            ? 'pass'
+            : state === 'needs_auth'
+              ? 'warn'
+              : 'fail',
+        state === null
+          ? `not checked live; last known ${detail.lastConnectedAt ?? 'never connected'}, ${enabled}/${tools.length} tool(s) offered${review > 0 ? `, ${review} need review` : ''}${detail.lastError ? ` — ${detail.lastError.slice(0, 160)}` : ''}.`
+          : `${state}, ${enabled}/${tools.length} tool(s) offered${review > 0 ? `, ${review} need review` : ''}${detail.lastError ? ` — ${detail.lastError.slice(0, 160)}` : ''}.`,
+        state === null
+          ? 'Run the app (GET /api/doctor) for a live connector check.'
+          : state === 'connected'
+            ? undefined
+            : state === 'needs_auth'
+              ? 'Open Settings → Connectors and sign in again.'
+              : 'Check the URL, the network from the container, and the connector headers.',
+      ),
+    );
+  }
+  if (offered > 25) {
+    checks.push(
+      check(
+        'connector tool budget',
+        'warn',
+        `${offered} connector tools are offered; OpenAI recommends a small set and every tool adds prompt cost.`,
+        'Turn off tools you do not use, or limit connectors per Echo.',
+      ),
+    );
+  }
+  return checks;
 }

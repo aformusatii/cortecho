@@ -95,7 +95,16 @@ export class ResponsesAgent implements Agent {
     const { settings, session, device } = context;
     const now = this.options.now ?? Date.now;
     const listenTool = listenToolOptions(settings);
-    const instructions = buildInstructions({ settings, listenTool, device });
+    const toolSet = context.toolSet ?? tools.snapshot({ settings, deviceId: context.deviceId ?? null });
+    const turnNumber = (session.turnSeq ?? 0) + 1;
+    session.turnSeq = turnNumber;
+    const instructions = buildInstructions({
+      settings,
+      listenTool,
+      device,
+      connectors: toolSet.connectors(),
+      hasConfirmTools: toolSet.hasConfirmTools(),
+    });
 
     const input: ResponseItem[] = [
       ...session.history,
@@ -118,7 +127,7 @@ export class ResponsesAgent implements Agent {
           input,
           tools: offerTools
             ? [
-                ...tools.definitions(),
+                ...toolSet.definitions(),
                 ...(listenTool ? [listenToolDefinition(listenTool)] : []),
                 ...(settings.agent.webSearch
                   ? [{ type: 'web_search' as const, search_context_size: 'low' as const }]
@@ -202,7 +211,15 @@ export class ResponsesAgent implements Agent {
 
       // tools.call never throws, so one failing tool does not stop the others.
       const records = await Promise.all(
-        calls.map((call) => tools.call(String(call.name), String(call.arguments ?? '{}'), signal)),
+        calls.map((call) =>
+          toolSet.call(String(call.name), String(call.arguments ?? '{}'), {
+            signal,
+            session,
+            turnNumber,
+            deadlineAtMs: context.deadlineAtMs ?? null,
+            deviceId: context.deviceId ?? null,
+          }),
+        ),
       );
       for (const [index, record] of records.entries()) {
         log.info(`tool ${record.name} ${record.ok ? 'ok' : 'failed'} in ${record.durationMs} ms`);
@@ -212,6 +229,8 @@ export class ResponsesAgent implements Agent {
           result: record.result,
           ok: record.ok,
           durationMs: record.durationMs,
+          ...(record.server ? { server: record.server } : {}),
+          ...(record.pending ? { pending: true } : {}),
         });
         input.push({ type: 'function_call_output', call_id: calls[index]?.call_id, output: record.output });
       }

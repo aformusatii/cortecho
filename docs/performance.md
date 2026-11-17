@@ -18,6 +18,9 @@ agent and TTS in a row. What keeps it short:
   whether a follow-up comes, and text written before a tool call is not the
   answer.
 - **Tool calls of one round run at the same time.**
+- **Connector calls are bounded twice:** the connector's own timeout (default
+  10 s, max 20 s) and the turn deadline minus 3 s. Connections are warm before
+  the wake word; a tool call never opens one.
 
 Measured with the fake Echo and the real OpenAI APIs on 2026-11-13, nine turns
 each, three questions, from the end of speech to the first audio:
@@ -28,6 +31,7 @@ each, three questions, from the end of speech to the first audio:
 | "What time is it?" | 4.2 s | 2.4 s |
 | transcription, after the VAD's end | 0.7 s | 0.2 s |
 | agent, without a tool call | 0.7–1.5 s | 0.8–1.9 s (unchanged: the model) |
+| connector call (a warm MCP session) | — | 0.1–0.5 s + the model's next round |
 | TTS, first audio after a long answer | 0.5–0.8 s | 0.2–0.3 s |
 
 What is left is mostly the closing silence and the model's time to its first

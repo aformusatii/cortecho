@@ -71,6 +71,10 @@ export type ToolCallRecord = {
   result: string;
   ok: boolean;
   durationMs: number;
+  /** The connector slug for an MCP tool call (plugins have none). */
+  server?: string;
+  /** A “confirm by voice” call that asked for the user’s yes and did not run yet. */
+  pending?: boolean;
 };
 
 /**
@@ -152,6 +156,8 @@ export type Health = {
   devices: DeviceStatus[];
   openai: { configured: boolean; sttModel: string; agentModel: string; ttsModel: string };
   tools: string[];
+  /** One entry per configured connector, for the status page. */
+  connectors: import('./mcp.schema.ts').McpHealthEntry[];
   /** The settings version the current values came from (0 = no saved change yet). */
   settingsVersion: number;
   lastTurn: Turn | null;

@@ -27,7 +27,7 @@ import { isApiError } from '@/lib/api-client.ts';
 import { useSaveDeviceSettings } from '../api/devices.mutations.ts';
 import { deviceSettingsQueryOptions } from '../api/devices.queries.ts';
 
-const PER_ECHO = SETTING_DESCRIPTORS.filter((descriptor) => descriptor.perEcho);
+const PER_ECHO = SETTING_DESCRIPTORS.filter((descriptor) => descriptor.perEcho && descriptor.hidden !== true);
 
 /**
  * Per-Echo overrides (§9.7): only the room-dependent keys. Each row shows the

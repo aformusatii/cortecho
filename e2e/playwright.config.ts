@@ -4,7 +4,7 @@ const PORT = 3200;
 // A separate, fresh database so e2e tests never touch the development data.
 // No ECHO_HOST (ESPHome client off) and no OpenAI key: the UI must work
 // without either, and the tests never spend API credits.
-const E2E_ENV = `DATABASE_PATH=./data/e2e.db PORT=${PORT} ECHO_HOST= OPENAI_API_KEY=`;
+const E2E_ENV = `DATABASE_PATH=./data/e2e.db PORT=${PORT} ECHO_HOST= OPENAI_API_KEY= CORTECHO_SECRET_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= PUBLIC_BASE_URL=http://localhost:${PORT}`;
 
 export default defineConfig({
   testDir: '.',
@@ -53,6 +53,15 @@ export default defineConfig({
       command: 'node fake-echo-server.ts',
       cwd: '.',
       port: 26101,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      stdout: 'ignore',
+      stderr: 'pipe',
+    },
+    {
+      command: 'node fake-mcp-server.ts',
+      cwd: '.',
+      port: 26200,
       reuseExistingServer: false,
       timeout: 30_000,
       stdout: 'ignore',

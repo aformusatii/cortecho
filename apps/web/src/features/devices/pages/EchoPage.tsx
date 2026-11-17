@@ -11,6 +11,7 @@ import { CONNECTION_LABELS, ENCRYPTION_LABELS } from '@/lib/displays.ts';
 import { devicesQueryOptions } from '../api/devices.queries.ts';
 import { ConnectionTab } from '../components/ConnectionTab.tsx';
 import { DeleteTab } from '../components/DeleteTab.tsx';
+import { EchoConnectorsTab } from '../components/EchoConnectorsTab.tsx';
 import { OverviewTab } from '../components/OverviewTab.tsx';
 import { PromptTab } from '../components/PromptTab.tsx';
 import { TuningTab } from '../components/TuningTab.tsx';
@@ -114,6 +115,9 @@ export function EchoPage({ deviceId, tab }: { deviceId: number; tab: EchoTab }) 
         </TabsContent>
         <TabsContent value="tuning">
           <TuningTab device={device} />
+        </TabsContent>
+        <TabsContent value="connectors">
+          <EchoConnectorsTab device={device} />
         </TabsContent>
         <TabsContent value="delete">
           <DeleteTab device={device} />

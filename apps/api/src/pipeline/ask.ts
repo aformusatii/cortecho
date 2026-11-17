@@ -1,6 +1,7 @@
 import type { SettingsSnapshot } from '../features/settings/settings-store.ts';
 import type { TurnsRepository } from '../features/turns/turns.repository.ts';
 import { errorMessage } from '../lib/logger.ts';
+import type { ToolRegistry } from '../tools/registry.ts';
 import type { AgentSessions } from './agent-sessions.ts';
 import type { PromptDevice } from './prompt-layers.ts';
 import type { VoiceServices } from './services.ts';
@@ -16,12 +17,14 @@ export async function askWeb({
   turns,
   sessions,
   snapshot,
+  tools,
 }: {
   text: string;
   services: VoiceServices;
   turns: TurnsRepository;
   sessions: AgentSessions;
   snapshot: SettingsSnapshot;
+  tools: ToolRegistry;
 }): Promise<import('@cortecho/shared').Turn> {
   const startedAt = new Date();
   const startedAtMs = Date.now();
@@ -33,6 +36,9 @@ export async function askWeb({
       settings: snapshot.settings,
       session,
       device,
+      toolSet: tools.snapshot({ settings: snapshot.settings, deviceId: null }),
+      deviceId: null,
+      deadlineAtMs: null,
     });
     return turns.insert({
       source: 'ask',

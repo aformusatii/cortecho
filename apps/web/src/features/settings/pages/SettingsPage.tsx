@@ -8,6 +8,7 @@ import {
   type VoicePreview,
 } from '@cortecho/shared';
 import { useQueries, useQuery } from '@tanstack/react-query';
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import { FileTextIcon, HistoryIcon, RefreshCwIcon } from 'lucide-react';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -15,6 +16,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
+import { ConnectorsTab } from '@/features/connectors/pages/ConnectorsTab.tsx';
 import { useReconnectDevice } from '@/features/devices/api/devices.mutations.ts';
 import { deviceSettingsQueryOptions, devicesQueryOptions } from '@/features/devices/api/devices.queries.ts';
 import { isApiError } from '@/lib/api-client.ts';
@@ -25,15 +27,48 @@ import { FullPromptDialog } from '../components/FullPromptDialog.tsx';
 import { SaveBar } from '../components/SaveBar.tsx';
 import { SettingsHistoryDialog } from '../components/SettingsHistoryDialog.tsx';
 import { type OverriddenNote, SettingsSection } from '../components/SettingsSection.tsx';
+import { SettingsTabs } from '../components/SettingsTabs.tsx';
 import { VoiceTestPhrase } from '../components/VoiceTestPhrase.tsx';
 import { changedKeys, descriptorsOfSection, type FormValues, focusField, validateForm } from '../draft.ts';
+
+/**
+ * `/settings?tab=general|connectors`. General is the versioned settings
+ * document (save bar, history, conflict flow); Connectors is a runtime page
+ * where each connector saves on its own.
+ */
+export function SettingsPage() {
+  const search = useSearch({ from: '/settings' });
+  const navigate = useNavigate();
+
+  if (search.tab === 'connectors') {
+    return (
+      <div className="space-y-6">
+        <header>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Settings</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Connected services the voice agent may use. Changes apply from the next request.
+          </p>
+        </header>
+        <SettingsTabs />
+        <ConnectorsTab
+          serverId={search.server}
+          auth={search.auth as 'ok' | 'error' | undefined}
+          reason={search.reason}
+          onConsumed={() => void navigate({ to: '/settings', search: { tab: 'connectors' }, replace: true })}
+        />
+      </div>
+    );
+  }
+
+  return <GeneralSettings />;
+}
 
 /**
  * The global settings: every descriptor rendered from the registry, one
  * versioned document, a sticky save bar, and a 409 flow that keeps the unsaved
  * values and offers to reapply them.
  */
-export function SettingsPage() {
+function GeneralSettings() {
   const settings = useQuery(settingsQueryOptions());
   const devices = useQuery(devicesQueryOptions());
   const models = useQuery(openaiModelsQueryOptions());
@@ -217,6 +252,8 @@ export function SettingsPage() {
           </Button>
         </div>
       </header>
+
+      <SettingsTabs />
 
       {conflictVersion !== null && (
         <Alert>

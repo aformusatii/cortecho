@@ -4,6 +4,22 @@ All notable changes to Cortecho are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **MCP connectors**: connect Gmail, Google Calendar, Home Assistant or any MCP
+  server in Settings → Connectors. Streamable HTTP with an SSE fallback, header
+  auth and OAuth 2.1 (PKCE, discovery, pre-registered clients, DCR), encrypted
+  connector secrets, per-tool Off / Automatic / Confirm-by-voice policies with a
+  cross-turn confirmation barrier, definition pinning, per-Echo limits, health
+  and doctor checks.
+- Settings tabs (`?tab=general|connectors`), an Echo **Connectors** tab, and
+  connector labels on the turn history.
+- `CORTECHO_SECRET_KEY`, `PUBLIC_BASE_URL`, `MCP_ALLOWED_ORIGINS` and
+  `MCP_CIMD_ENABLED`; `docs/connectors.md`.
+- Logger redaction for tokens, OAuth codes and secret-named fields.
+
 ## [0.1.0] - 2026-11-16
 
 First public release.

@@ -15,6 +15,10 @@ import { SettingsStore } from './features/settings/settings-store.ts';
 import { createTurnsRepository } from './features/turns/turns.repository.ts';
 import type { VoiceRuntime } from './features/voice/voice-runtime.ts';
 import { createLogger } from './lib/logger.ts';
+import { createSecretBox, type SecretBox } from './lib/secret-box.ts';
+import { createMcpRepository } from './mcp/mcp.repository.ts';
+import { McpManager } from './mcp/mcp-manager.ts';
+import { McpToolSource } from './mcp/mcp-tool-source.ts';
 import { AgentSessions } from './pipeline/agent-sessions.ts';
 import { createOpenAiServices } from './pipeline/openai.ts';
 import { ReplyAudioStore } from './pipeline/reply-audio.ts';
@@ -48,6 +52,22 @@ const importedDevice = importDeviceFromEnvironment(devicesRepository);
 if (!importedDevice) warnStaleDeviceEnvironment();
 
 const tools = buildToolRegistry(config);
+// Connector secrets are encrypted at rest with CORTECHO_SECRET_KEY. A missing
+// key leaves connectors with auth_type none working; an invalid one is logged
+// and treated as missing (the doctor says what to fix).
+let secretBox: SecretBox | null = null;
+try {
+  secretBox = createSecretBox(config.mcp.secretKey);
+} catch (error) {
+  log.error(`CORTECHO_SECRET_KEY is invalid: ${(error as Error).message}`);
+}
+const mcpRepository = createMcpRepository(db, secretBox);
+const mcp = new McpManager({
+  repository: mcpRepository,
+  publicBaseUrl: () => config.mcp.publicBaseUrl,
+  cimdEnabled: config.mcp.cimdEnabled,
+});
+tools.addSource(new McpToolSource({ manager: mcp }));
 const services = createOpenAiServices(config, tools, () => settings.current().settings);
 const turns = createTurnsRepository(db);
 const replies = new ReplyAudioStore(config.reply.ttlMs);
@@ -63,6 +83,7 @@ const devices = new DeviceManager({
   replies,
   sessions,
   config,
+  tools,
 });
 const voice: VoiceRuntime = {
   config,
@@ -70,6 +91,7 @@ const voice: VoiceRuntime = {
   services,
   tools,
   turns,
+  mcp,
   settings,
   sessions,
   devices,
@@ -79,6 +101,7 @@ const voice: VoiceRuntime = {
       settings,
       devices: devicesRepository.list(),
       production: isProduction,
+      mcp,
     }),
   startedAt: new Date(),
 };
@@ -92,6 +115,14 @@ if (['tts-1', 'tts-1-hd', 'gpt-4o-mini-tts'].includes(ttsModel)) {
   );
 }
 if (devicesRepository.count() === 0) log.warn('No Echo is configured: add one with POST /api/devices');
+log.info(
+  `connectors: ${
+    mcpRepository
+      .list()
+      .map((row) => `${row.slug}${row.enabled ? '' : ' (off)'}`)
+      .join(', ') || '(none)'
+  }`,
+);
 const enabledDevices = devicesRepository.list().filter((device) => device.enabled);
 if (enabledDevices.length > 0 && !config.reply.baseUrl) {
   // Inside Docker the link's local address is a container address, so the
@@ -141,8 +172,10 @@ const server = serve({ fetch: app.fetch, port: env.PORT, hostname: env.HOST }, (
 });
 
 // Start the links after the routes exist, so a turn that arrives immediately
-// has somewhere to go.
+// has somewhere to go. Connectors connect in parallel: their tools are not
+// needed until the first turn.
 void devices.start();
+void mcp.start();
 
 // Graceful shutdown: `docker stop` sends SIGTERM, Ctrl+C sends SIGINT.
 // Stop the Echo links, let in-flight requests finish, then close the database.
@@ -160,13 +193,15 @@ function shutdown(signal: NodeJS.Signals): void {
   forceExit.unref();
 
   void devices.stopAll().finally(() => {
-    server.close((error) => {
-      sqlite.close();
-      if (error) {
-        console.error(error);
-        process.exit(1);
-      }
-      process.exit(0);
+    void mcp.stopAll().finally(() => {
+      server.close((error) => {
+        sqlite.close();
+        if (error) {
+          console.error(error);
+          process.exit(1);
+        }
+        process.exit(0);
+      });
     });
   });
 }

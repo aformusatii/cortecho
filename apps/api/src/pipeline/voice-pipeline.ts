@@ -16,6 +16,7 @@ import { VA_EVENT, type VoiceAssistantAudio, type VoiceAssistantRequest } from '
 import type { SettingsSnapshot } from '../features/settings/settings-store.ts';
 import type { TurnsRepository } from '../features/turns/turns.repository.ts';
 import { createLogger, errorMessage } from '../lib/logger.ts';
+import type { ToolRegistry, ToolSet } from '../tools/registry.ts';
 import { EndOfSpeechDetector, type VadOptions } from '../vad/end-of-speech.ts';
 import type { AgentSessions } from './agent-sessions.ts';
 import { LinearResampler, pcmDurationMs, pcmToWav } from './audio.ts';
@@ -64,6 +65,8 @@ export type PipelineOptions = {
   device: () => PromptDevice | null;
   /** Base of the reply URLs when REPLY_AUDIO_BASE_URL is empty (server.ts derives it from the link). */
   fallbackReplyBaseUrl?: () => string;
+  /** The tool registry: the turn's ToolSet is frozen from it at the start. */
+  tools: ToolRegistry;
 };
 
 /** Raised by /api/say when it cannot speak right now. */
@@ -104,6 +107,8 @@ type ActiveTurn = import('@cortecho/shared').SearchDisplay & {
   followUp: boolean;
   /** The snapshot this turn runs with, taken when it started. */
   settings: Settings;
+  /** The tools offered for this turn, frozen at its start. */
+  toolSet: ToolSet;
   settingsVersion: number;
   /** Which conversation memory this turn uses ('voice', 'web'; later 'device:<id>'). */
   sessionKey: string;
@@ -113,6 +118,8 @@ type ActiveTurn = import('@cortecho/shared').SearchDisplay & {
   eager: EagerTranscript | null;
   /** Listening: the wall-clock bound. After that: no reply handed over in time. */
   deadline: NodeJS.Timeout | null;
+  /** The turn deadline as a timestamp, for connector call budgets. */
+  deadlineAtMs: number | null;
 };
 
 /**
@@ -232,6 +239,7 @@ export class VoicePipeline {
       audio: [],
       eager: null,
       deadline: null,
+      deadlineAtMs: null,
     };
     // The user is about to speak for a few seconds: time to open the connection.
     this.options.services.warmUp?.();
@@ -324,6 +332,7 @@ export class VoicePipeline {
     // From here the reply has the turn deadline to reach the Echo.
     if (turn.deadline) clearTimeout(turn.deadline);
     const { turnDeadlineMs } = turn.settings.pipeline;
+    turn.deadlineAtMs = Date.now() + turnDeadlineMs;
     turn.deadline = setTimeout(() => this.onDeadline(turn), turnDeadlineMs);
     turn.deadline.unref();
     // Mic off, ring to "thinking".
@@ -453,6 +462,9 @@ export class VoicePipeline {
         settings: turn.settings,
         session,
         device: this.options.device(),
+        toolSet: turn.toolSet,
+        deviceId: this.options.deviceId,
+        deadlineAtMs: turn.deadlineAtMs,
       });
       signal.throwIfAborted();
       turn.timings.agentDoneMs = this.elapsed(turn);
@@ -691,6 +703,7 @@ export class VoicePipeline {
       audio: [],
       eager: null,
       deadline: null,
+      deadlineAtMs: null,
     };
     turn.phase = 'speaking';
     turn.reply = text;
@@ -748,6 +761,7 @@ export class VoicePipeline {
       audio: [],
       eager: null,
       deadline: null,
+      deadlineAtMs: null,
     };
     turn.transcript = text;
     try {
@@ -759,6 +773,9 @@ export class VoicePipeline {
         settings: turn.settings,
         session,
         device: this.options.device(),
+        toolSet: turn.toolSet,
+        deviceId: this.options.deviceId,
+        deadlineAtMs: null,
       });
       turn.timings.agentDoneMs = this.elapsed(turn);
       turn.displayText = reply.displayText;
@@ -809,7 +826,7 @@ export class VoicePipeline {
     source: TurnSource,
     snapshot: SettingsSnapshot,
     sessionKey: string,
-  ): Omit<ActiveTurn, 'vad' | 'audio' | 'eager' | 'deadline' | 'followUp'> {
+  ): Omit<ActiveTurn, 'vad' | 'audio' | 'eager' | 'deadline' | 'deadlineAtMs' | 'followUp'> {
     return {
       source,
       startedAt: new Date(),
@@ -825,6 +842,7 @@ export class VoicePipeline {
       silenced: false,
       settings: snapshot.settings,
       settingsVersion: snapshot.version,
+      toolSet: this.options.tools.snapshot({ settings: snapshot.settings, deviceId: this.options.deviceId }),
       sessionKey,
     };
   }

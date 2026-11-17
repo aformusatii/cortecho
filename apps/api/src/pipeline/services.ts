@@ -33,6 +33,12 @@ export type AgentContext = {
   session: AgentSession;
   /** The Echo the request comes from: its name and its owner-written prompt (layer 3). */
   device?: PromptDevice | null;
+  /** The tool snapshot taken at the start of this turn (plugins + connectors). */
+  toolSet?: import('../tools/registry.ts').ToolSet;
+  /** The Echo's id, or null for the web speaker. */
+  deviceId?: number | null;
+  /** The turn deadline (voice) for clamping connector timeouts. */
+  deadlineAtMs?: number | null;
 };
 
 export type Agent = {

@@ -48,8 +48,16 @@ function EchoCard({ device }: { device: DeviceStatus }) {
   );
 }
 
+const connectorTone = {
+  connected: 'good',
+  connecting: 'warn',
+  needs_auth: 'warn',
+  disabled: 'off',
+  error: 'bad',
+} as const;
+
 export function HealthCards({ health }: { health: Health }) {
-  const { devices, openai } = health;
+  const { devices, openai, connectors } = health;
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {devices.length === 0 ? (
@@ -58,6 +66,21 @@ export function HealthCards({ health }: { health: Health }) {
         </Card>
       ) : (
         devices.map((device) => <EchoCard key={device.id} device={device} />)
+      )}
+      {connectors.length > 0 && (
+        <Card title="Connectors">
+          {connectors.map((connector) => (
+            <Row key={connector.slug} label={connector.slug}>
+              <StatusDot tone={connectorTone[connector.state]}>
+                {connector.state === 'connected'
+                  ? 'Connected'
+                  : connector.state === 'needs_auth'
+                    ? 'Needs sign-in'
+                    : connector.state}
+              </StatusDot>
+            </Row>
+          ))}
+        </Card>
       )}
       <Card title="Pipeline">
         <Row label="Uptime">{formatUptime(health.uptimeSeconds)}</Row>

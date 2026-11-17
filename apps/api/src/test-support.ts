@@ -11,6 +11,10 @@ import { importSettingsFromEnvironment } from './features/settings/import.ts';
 import { SettingsStore } from './features/settings/settings-store.ts';
 import { createTurnsRepository } from './features/turns/turns.repository.ts';
 import type { VoiceRuntime } from './features/voice/voice-runtime.ts';
+import { createSecretBox } from './lib/secret-box.ts';
+import { createMcpRepository } from './mcp/mcp.repository.ts';
+import { McpManager } from './mcp/mcp-manager.ts';
+import { McpToolSource } from './mcp/mcp-tool-source.ts';
 import { AgentSessions } from './pipeline/agent-sessions.ts';
 import type { PromptDevice } from './pipeline/prompt-layers.ts';
 import { ReplyAudioStore } from './pipeline/reply-audio.ts';
@@ -158,6 +162,14 @@ export function createTestRuntime({
   const turns = createTurnsRepository(db);
   const services = fakeServices();
   const tools = buildToolRegistry(config);
+  const secretBox = createSecretBox(config.mcp.secretKey);
+  const mcpRepository = createMcpRepository(db, secretBox);
+  const mcp = new McpManager({
+    repository: mcpRepository,
+    publicBaseUrl: () => config.mcp.publicBaseUrl,
+    cimdEnabled: config.mcp.cimdEnabled,
+  });
+  tools.addSource(new McpToolSource({ manager: mcp }));
   const replies = new ReplyAudioStore(config.reply.ttlMs);
   const sessions = new AgentSessions();
   const devices = new DeviceManager({
@@ -168,6 +180,7 @@ export function createTestRuntime({
     replies,
     sessions,
     config,
+    tools,
   });
   const runtime: VoiceRuntime = {
     config,
@@ -175,6 +188,7 @@ export function createTestRuntime({
     services,
     tools,
     turns,
+    mcp,
     settings,
     sessions,
     devices,
@@ -184,6 +198,7 @@ export function createTestRuntime({
         settings,
         devices: repository.list(),
         production: false,
+        mcp,
       }),
     startedAt: new Date(),
   };
@@ -206,6 +221,8 @@ export function createTestRuntime({
     services,
     repository,
     devices,
+    mcp,
+    mcpRepository,
     sessions,
     turns,
     replies,
@@ -216,6 +233,8 @@ export function createTestRuntime({
     pipeline: firstRuntime?.pipeline as unknown as VoicePipeline,
     /** Starts every enabled device's link (the manager does this at server start). */
     startDevices: () => devices.start(),
+    /** Starts the enabled connectors too (when a test needs them). */
+    startConnectors: () => mcp.start(),
   };
 }
 

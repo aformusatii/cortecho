@@ -10,6 +10,7 @@ mkdir cortecho && cd cortecho
 curl -O https://raw.githubusercontent.com/aformusatii/cortecho/main/docker-compose.yml
 curl -o cortecho.env https://raw.githubusercontent.com/aformusatii/cortecho/main/cortecho.env.example
 # edit cortecho.env: ECHO_HOST, OPENAI_API_KEY, REPLY_AUDIO_BASE_URL, TZ
+# for connectors: CORTECHO_SECRET_KEY and PUBLIC_BASE_URL (see docs/connectors.md)
 docker compose up -d
 docker compose exec app cortecho doctor
 ```
@@ -67,7 +68,9 @@ upgrade.
 
 ## Changing configuration later
 
-Only `REPLY_AUDIO_BASE_URL` and `OPENAI_BASE_URL` are read again after the
-first start. Everything behavioural lives in SQLite and is edited in the UI;
-changing those variables in `cortecho.env` later does nothing (the app warns).
-See [configuration](configuration.md).
+Only `REPLY_AUDIO_BASE_URL`, `OPENAI_BASE_URL`, `PUBLIC_BASE_URL`,
+`CORTECHO_SECRET_KEY`, `MCP_ALLOWED_ORIGINS` and `MCP_CIMD_ENABLED` are read
+again after the first start. Everything behavioural lives in SQLite and is
+edited in the UI; changing the other variables in `cortecho.env` later does
+nothing (the app warns). See [configuration](configuration.md) and
+[connectors](connectors.md).

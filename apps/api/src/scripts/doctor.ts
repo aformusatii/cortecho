@@ -5,6 +5,9 @@ import { runDoctor } from '../doctor/checks.ts';
 import { env, isProduction } from '../env.ts';
 import { createDevicesRepository } from '../features/devices/devices.repository.ts';
 import { SettingsStore } from '../features/settings/settings-store.ts';
+import { createSecretBox, type SecretBox } from '../lib/secret-box.ts';
+import { createMcpRepository } from '../mcp/mcp.repository.ts';
+import { McpManager } from '../mcp/mcp-manager.ts';
 
 /**
  * `cortecho doctor` (also `npm run doctor`). Read-only: it never changes a
@@ -34,12 +37,24 @@ const { db, sqlite } = openDatabase(env.DATABASE_PATH);
 runMigrations(db);
 const settings = new SettingsStore(db);
 const devices = createDevicesRepository(db);
+let secretBox: SecretBox | null = null;
+try {
+  secretBox = createSecretBox(config.mcp.secretKey);
+} catch {
+  // connectorChecks reports the bad key; the doctor must still run.
+}
+const mcp = new McpManager({
+  repository: createMcpRepository(db, secretBox),
+  publicBaseUrl: () => config.mcp.publicBaseUrl,
+  cimdEnabled: config.mcp.cimdEnabled,
+});
 
 const report = await runDoctor({
   config,
   settings,
   devices: devices.list(),
   production: isProduction,
+  mcp,
   localBaseUrl: sayText ? `http://127.0.0.1:${env.PORT}` : undefined,
   sayText,
 });
