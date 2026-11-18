@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentSession } from '../pipeline/agent-sessions.ts';
-import { createConfirmGate, PENDING_OUTPUT } from './confirmations.ts';
+import { createConfirmGate, mismatchReason, PENDING_OUTPUT } from './confirmations.ts';
 
 const session = (): AgentSession => ({ history: [], lastTurnAt: 0, turnSeq: 0, pendingAction: null });
 
@@ -68,5 +68,35 @@ describe('confirm by voice', () => {
         })
       ).allow,
     ).toBe(false);
+  });
+
+  it('explains in the log why a call was not the yes (argument keys, never values)', () => {
+    const pending = {
+      exposedName: 'gmail__draft',
+      argsHash: 'a',
+      argumentsJson: '{"to":"a@b.c","subject":"Hello","body":"Hello."}',
+      createdTurn: 2,
+      expiresAt: 60_000,
+    };
+    const call = (over: Partial<Parameters<typeof mismatchReason>[1]> = {}) => ({
+      exposedName: 'gmail__draft',
+      hash: 'a',
+      args: { to: 'a@b.c', subject: 'Hello', body: 'Hello.' },
+      turnNumber: 3,
+      at: 1000,
+      ...over,
+    });
+    expect(mismatchReason(null, call())).toBe('nothing was pending (first call)');
+    expect(mismatchReason(pending, call({ exposedName: 'cal__create' }))).toBe(
+      'another tool was pending (gmail__draft)',
+    );
+    expect(mismatchReason(pending, call({ turnNumber: 2 }))).toBe('same turn as the pending call (turn 2)');
+    const reason = mismatchReason(
+      pending,
+      call({ hash: 'b', args: { to: 'a@b.c', subject: 'Hi', body: 'Hello.', cc: 'z' } }),
+    );
+    expect(reason).toBe('arguments differ from turn 2 (cc, subject)');
+    expect(reason).not.toContain('Hi');
+    expect(mismatchReason(pending, call({ at: 65_000 }))).toBe('expired 5 s ago');
   });
 });

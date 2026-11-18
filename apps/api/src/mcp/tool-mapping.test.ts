@@ -75,7 +75,7 @@ describe('tool mapping', () => {
       '[Gmail] Find mail.',
     );
     expect(toolDescription('Gmail', { name: 'send', title: 'Send' }, 'confirm')).toBe(
-      "[Gmail] Send Requires the user's spoken yes first.",
+      '[Gmail] Send Needs a spoken yes: the first call only prepares it and returns pending; call it again with the same arguments after the user says yes.',
     );
   });
 });

@@ -111,10 +111,17 @@ export function sanitizeInputSchema(raw: unknown): SanitizedSchema {
   return { schema: schema as JsonSchema, tooLarge: false };
 }
 
-/** `[Gmail] Search threads — Finds messages. Requires the user's spoken yes first.` */
+/**
+ * `[Gmail] Send — Sends a message. Needs a spoken yes: …`. The suffix says the
+ * first call only prepares the action, so the model calls it instead of
+ * asking first (asking first meant two questions for one action).
+ */
 export function toolDescription(connectorName: string, tool: ListedTool, policy: 'auto' | 'confirm'): string {
   const body = (tool.title || tool.description || tool.name).replace(/\s+/g, ' ').trim();
-  const suffix = policy === 'confirm' ? " Requires the user's spoken yes first." : '';
+  const suffix =
+    policy === 'confirm'
+      ? ' Needs a spoken yes: the first call only prepares it and returns pending; call it again with the same arguments after the user says yes.'
+      : '';
   return `[${connectorName}] ${body}`.slice(0, MAX_TOOL_DESCRIPTION_CHARS - suffix.length) + suffix;
 }
 

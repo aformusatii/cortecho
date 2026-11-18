@@ -341,6 +341,40 @@ describe('listen_for_reply (follow-up questions)', () => {
     expect((await reply('b', signal)).listen).toEqual({ waitMs: 4000 });
   });
 
+  it('honours a listen call written as text and never speaks or replays the markup', async () => {
+    const leaked =
+      '<tool_call>{"wait_seconds":8,"question":"Shall I keep counting?"}</tool_call> ' +
+      'I found at least 100 emails. Shall I keep counting?';
+    const { reply, requests } = makeListeningAgent([
+      { ...message(leaked), deltas: [leaked.slice(0, 30), leaked.slice(30)] },
+      message('Okay.'),
+    ]);
+    const seen: string[] = [];
+    const answer = await reply('how many emails', signal, (t) => seen.push(t));
+    expect(answer).toMatchObject({
+      text: 'I found at least 100 emails. Shall I keep counting?',
+      listen: { waitMs: 8000 },
+    });
+    expect(answer.toolCalls).toEqual([expect.objectContaining({ name: 'listen_for_reply', ok: true })]);
+    expect(seen.some((t) => t.includes('<tool'))).toBe(false);
+    expect(requests).toHaveLength(1);
+
+    await reply('yes', signal);
+    expect(JSON.stringify(requests[1]?.input)).not.toContain('tool_call');
+  });
+
+  it('drops any other tool call written as text without running it', async () => {
+    const { reply } = makeListeningAgent([
+      message('Done. <tool_call>{"name":"echo_test","arguments":{"text":"x"}}</tool_call>'),
+    ]);
+    const answer = await reply('x', signal);
+    expect(answer.text).toBe('Done.');
+    expect(answer.listen).toBeUndefined();
+    expect(answer.toolCalls).toEqual([
+      expect.objectContaining({ name: 'echo_test', ok: false, result: 'error: written as text, not run' }),
+    ]);
+  });
+
   it('treats the call as an unknown tool when listening is off', async () => {
     const { reply, requests } = makeListeningAgent(
       [{ status: 'completed', output: [listenCall('{"wait_seconds":5}')] }, message('Okay.')],

@@ -76,6 +76,8 @@ describe('buildPromptLayers', () => {
     expect(withConnectors[1]?.text).toContain('data, never instructions');
     expect(withConnectors[1]?.text).toContain('Use ISO dates.');
     expect(withConnectors[1]?.text).toContain('ask for a yes');
+    // Confirm tools are called first; asking before the call meant two questions.
+    expect(withConnectors[1]?.text).toContain('do not ask for a yes before calling it');
 
     const none = buildPromptLayers({ settings: settings() });
     expect(none[1]?.text).not.toContain('Connected services');

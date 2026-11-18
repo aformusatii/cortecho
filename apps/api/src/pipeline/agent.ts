@@ -13,6 +13,7 @@ import {
 import { buildInstructions } from './prompt-layers.ts';
 import { answerWithCitations } from './search-answer.ts';
 import type { Agent, AgentContext, AgentReply } from './services.ts';
+import { cleanOutput, speakableText, type TextToolCall } from './text-tool-calls.ts';
 
 const log = createLogger('agent');
 
@@ -98,6 +99,16 @@ export class ResponsesAgent implements Agent {
     const toolSet = context.toolSet ?? tools.snapshot({ settings, deviceId: context.deviceId ?? null });
     const turnNumber = (session.turnSeq ?? 0) + 1;
     session.turnSeq = turnNumber;
+    // Confirm-by-voice troubleshooting: is a yes from this turn expected to run something?
+    const pending = session.pendingAction;
+    if (pending) {
+      const leftS = Math.round((pending.expiresAt - now()) / 1000);
+      log.info(`turn ${turnNumber}: an action waits for a spoken yes`, {
+        tool: pending.exposedName,
+        fromTurn: pending.createdTurn,
+        ...(leftS >= 0 ? { expiresInS: leftS } : { expiredSAgo: -leftS }),
+      });
+    }
     const instructions = buildInstructions({
       settings,
       listenTool,
@@ -148,7 +159,7 @@ export class ResponsesAgent implements Agent {
             ? undefined
             : (delta) => {
                 written += delta;
-                onText(written);
+                onText(speakableText(written));
               }),
         settings,
       );
@@ -156,8 +167,11 @@ export class ResponsesAgent implements Agent {
       if (response.status && response.status !== 'completed') {
         throw new Error(`Response ended with status "${response.status}"`);
       }
+      // Tool calls written as text are never spoken, shown or replayed.
+      const cleaned = cleanOutput(response.output);
+      const output = cleaned.output;
 
-      for (const item of response.output.filter((item) => item.type === 'web_search_call')) {
+      for (const item of output.filter((item) => item.type === 'web_search_call')) {
         toolCalls.push({
           name: 'web_search',
           arguments: JSON.stringify(item.action ?? {}),
@@ -166,8 +180,8 @@ export class ResponsesAgent implements Agent {
           durationMs: response.searchDurations?.[String(item.id)] ?? 0,
         });
       }
-      input.push(...response.output.map(toInputItem));
-      const allCalls = response.output.filter((item) => item.type === 'function_call');
+      input.push(...output.map(toInputItem));
+      const allCalls = output.filter((item) => item.type === 'function_call');
       // Without listenTool the tool is not offered; a call to it then goes to
       // the registry like any unknown name and comes back as an error.
       const isListen = (call: ResponseItem) => listenTool !== undefined && call.name === LISTEN_TOOL_NAME;
@@ -175,6 +189,22 @@ export class ResponsesAgent implements Agent {
       const calls = allCalls.filter((call) => !isListen(call));
 
       let listenQuestion = '';
+      for (const textCall of cleaned.calls) {
+        const asListen = this.textListen(textCall, listenTool);
+        if (asListen) {
+          listen = { waitMs: asListen.waitMs };
+          listenQuestion ||= asListen.question;
+        }
+        toolCalls.push({
+          name: textCall.name ?? (asListen ? LISTEN_TOOL_NAME : 'unknown'),
+          arguments: JSON.stringify(textCall.arguments),
+          result: asListen
+            ? `written as text; listening ${Math.round(asListen.waitMs / 1000)} s after the reply`
+            : 'error: written as text, not run',
+          ok: asListen !== null,
+          durationMs: 0,
+        });
+      }
       for (const call of listenCalls) {
         const args = String(call.arguments ?? '{}');
         const parsed = parseListenArguments(args, listenTool as ListenToolOptions);
@@ -197,18 +227,23 @@ export class ResponsesAgent implements Agent {
       }
 
       if (calls.length === 0) {
-        const written = (response.output_text ?? extractText(response.output)).trim();
+        const written = (
+          cleaned.calls.length > 0 ? extractText(output) : (response.output_text ?? extractText(output))
+        ).trim();
         const reply = written || listenQuestion;
         // Only a listen call and no words at all: one more round for the reply text.
         if (!reply && listenCalls.length > 0) continue;
         session.history = input;
         return {
-          ...(written ? answerWithCitations(written, response.output) : { text: reply }),
+          ...(written ? answerWithCitations(written, output) : { text: reply }),
           toolCalls,
           ...(listen ? { listen } : {}),
         };
       }
 
+      log.debug(`turn ${turnNumber} round ${round}: ${calls.length} tool call(s)`, {
+        tools: calls.map((call) => String(call.name)),
+      });
       // tools.call never throws, so one failing tool does not stop the others.
       const records = await Promise.all(
         calls.map((call) =>
@@ -222,7 +257,14 @@ export class ResponsesAgent implements Agent {
         ),
       );
       for (const [index, record] of records.entries()) {
-        log.info(`tool ${record.name} ${record.ok ? 'ok' : 'failed'} in ${record.durationMs} ms`);
+        // "pending" is not a success: the tool did not run (confirm-by-voice).
+        const status = record.pending
+          ? 'pending (waits for a spoken yes, not run)'
+          : record.ok
+            ? 'ok'
+            : 'failed';
+        log.info(`tool ${record.name} ${status} in ${record.durationMs} ms`, { turn: turnNumber, round });
+        if (!record.ok) log.debug(`tool ${record.name} error`, { result: record.result.slice(0, 300) });
         toolCalls.push({
           name: record.name,
           arguments: record.arguments,
@@ -237,6 +279,29 @@ export class ResponsesAgent implements Agent {
     }
 
     throw new Error(`No answer after ${settings.agent.maxToolRounds} tool rounds`);
+  }
+
+  /**
+   * A listen call the model wrote as text: `listen_for_reply` by name, or a
+   * bare `{wait_seconds, question}` object. Anything else is logged and dropped.
+   */
+  private textListen(
+    call: TextToolCall,
+    listenTool: ListenToolOptions | undefined,
+  ): (ListenRequest & { question: string }) | null {
+    const looksLikeListen =
+      call.name === LISTEN_TOOL_NAME ||
+      (call.name === null && ('wait_seconds' in call.arguments || 'question' in call.arguments));
+    if (!looksLikeListen || !listenTool) {
+      log.warn(`model wrote a tool call as text; dropped (not run)`, {
+        tool: call.name ?? 'unnamed',
+        keys: Object.keys(call.arguments),
+      });
+      return null;
+    }
+    const parsed = parseListenArguments(JSON.stringify(call.arguments), listenTool);
+    log.warn(`model wrote ${LISTEN_TOOL_NAME} as text; treated as a call, listening ${parsed.waitMs} ms`);
+    return parsed;
   }
 
   private localTime(nowMs: number, settings: Settings): string {
