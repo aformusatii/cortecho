@@ -204,6 +204,9 @@ The barrier is enforced in code, not only in the prompt:
    produce the spoken yes of turn N and trigger a write.
 3. The pending action expires after **Confirmation window** (default 60 s).
 4. Changing the arguments replaces it with a new pending action.
+5. The microphone stays open after the reply that asks for the yes, even if the
+   model forgot `listen_for_reply` and did not end with a question mark (unless
+   `followUp.mode` is `never`). A spoken yes must never need the wake word.
 
 The model writes its own question, so a fooled model could describe the action
 wrongly. The turn history records the full arguments. This is why keeping write

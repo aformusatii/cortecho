@@ -118,4 +118,65 @@ describe('EndOfSpeechDetector', () => {
     expect(decision).toBe('no-speech');
     expect(vad.speechHeard).toBe(false);
   });
+
+  describe("the Echo's wake sound at the start of a follow-up", () => {
+    // What hassmic sends: 800 ms of digital silence (lead_in), then the mic
+    // stream opening with the wake sound (stock ui_wakesound, 650 ms) and its
+    // echo tail — measured to ~760 ms of live audio on 2026-11-18.
+    const followUpStart = () =>
+      Buffer.concat([
+        silence(800),
+        syntheticSpeech({ leadSilenceMs: 0, speechMs: 760, trailSilenceMs: 0, amplitude: 0.3 }),
+      ]);
+    const room = (ms: number) => syntheticSpeech({ leadSilenceMs: 0, speechMs: 0, trailSilenceMs: ms });
+    const answer = () =>
+      syntheticSpeech({ leadSilenceMs: 0, speechMs: 400, trailSilenceMs: 0, amplitude: 0.3 });
+    const followUp: VadOptions = { ...OPTIONS, startGuardMs: 2000, noSpeechTimeoutMs: 3000 };
+
+    it('does not end a follow-up on the wake sound and its echo tail', () => {
+      const { decision, vad } = run(Buffer.concat([followUpStart(), room(9000)]), followUp);
+      expect(decision).toBe('no-speech');
+      expect(vad.speechHeard).toBe(false);
+    });
+
+    it('records loud audio inside the guard without counting it as speech', () => {
+      const pcm = Buffer.concat([followUpStart(), room(200), answer(), room(9000)]);
+      const { decision, vad } = run(pcm, followUp);
+      expect(decision).toBe('no-speech');
+      expect(vad.speechHeard).toBe(false);
+      // The answer (live 960-1360 ms) is past the Echo's sound, so the pipeline
+      // can find it with STT; it must not be loud enough to end the turn.
+      expect(vad.liveStart).toBeGreaterThanOrEqual(770);
+      expect(vad.liveStart).toBeLessThanOrEqual(810);
+      expect(vad.lastLoudAtMs).toBeGreaterThan((vad.liveStart ?? 0) + 900);
+    });
+
+    it('hears an answer given after the guard', () => {
+      const pcm = Buffer.concat([followUpStart(), room(1400), answer(), room(1500)]);
+      // The whole wait must outlast the 2 s guard: the no-speech timeout counts
+      // from the start of the audio, guard included.
+      const { decision, vad } = run(pcm, { ...followUp, noSpeechTimeoutMs: 5000 });
+      expect(decision).toBe('speech-ended');
+      expect(vad.speechHeard).toBe(true);
+    });
+
+    it('without the guard the wake sound ends it after 800 ms of silence (the first failure)', () => {
+      const { decision, atMs } = run(Buffer.concat([followUpStart(), room(9000)]), {
+        ...OPTIONS,
+        noSpeechTimeoutMs: 3000,
+      });
+      expect(decision).toBe('speech-ended');
+      // 800 ms lead-in + 760 ms sound + 800 ms silence
+      expect(atMs).toBeLessThan(2500);
+    });
+
+    it('a 650 ms guard leaves the echo tail as speech (the second failure)', () => {
+      const { decision } = run(Buffer.concat([followUpStart(), room(9000)]), {
+        ...OPTIONS,
+        startGuardMs: 650,
+        noSpeechTimeoutMs: 3000,
+      });
+      expect(decision).toBe('speech-ended');
+    });
+  });
 });

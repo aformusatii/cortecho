@@ -33,7 +33,12 @@ describe('ToolRegistry', () => {
     const registry = new ToolRegistry().register(echoTestTool()).register(failing);
     expect((await registry.call('nope', '{}')).output).toMatch(/unknown tool/);
     expect((await registry.call('echo_test', '[1]')).output).toMatch(/not a JSON object/);
-    expect(await registry.call('boom', '{}')).toMatchObject({ ok: false, output: 'error: kaput' });
+    expect(await registry.call('boom', '{}')).toMatchObject({
+      ok: false,
+      output: 'error: kaput',
+      // The status page shows the stack when the call is opened.
+      errorDetail: expect.stringContaining('kaput'),
+    });
   });
 
   it('times out slow tools', async () => {

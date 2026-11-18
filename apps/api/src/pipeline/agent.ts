@@ -123,6 +123,11 @@ export class ResponsesAgent implements Agent {
       { role: 'user', content: text },
     ];
     const toolCalls: ToolCallRecord[] = [];
+    // A tool that failed in this turn is not run again in it: a silent retry
+    // (same or new arguments) hid the failure from the user (2026-11-18: a
+    // 403 on an email attachment was retried and the user was asked to say yes
+    // a second time). The model gets an error telling it to report instead.
+    const failedTools = new Set<string>();
     // Once asked for, listening holds for the turn's final answer, even when
     // the call came in a round with other tools.
     let listen: ListenRequest | null = null;
@@ -233,11 +238,30 @@ export class ResponsesAgent implements Agent {
         const reply = written || listenQuestion;
         // Only a listen call and no words at all: one more round for the reply text.
         if (!reply && listenCalls.length > 0) continue;
+        // A pending confirmation ends with the user's yes, whatever the model
+        // wrote: without this it can ask for the yes in a sentence that is not
+        // a question (2026-11-18: "If you say yes, I'll save it.") and forget
+        // listen_for_reply, leaving the microphone closed. `never` still wins.
+        const pendingYes = toolCalls.some((call) => call.pending === true);
+        const forcedWaitMs =
+          listenTool?.defaultWaitMs ??
+          Math.min(
+            settings.followUp.maxWaitMs,
+            Math.max(settings.followUp.minWaitMs, settings.vad.noSpeechTimeoutMs),
+          );
+        const effectiveListen =
+          listen ?? (pendingYes && settings.followUp.mode !== 'never' ? { waitMs: forcedWaitMs } : null);
+        if (effectiveListen && !listen) {
+          log.info(`keeping the microphone open: an action waits for a spoken yes`, {
+            turn: turnNumber,
+            waitMs: effectiveListen.waitMs,
+          });
+        }
         session.history = input;
         return {
           ...(written ? answerWithCitations(written, output) : { text: reply }),
           toolCalls,
-          ...(listen ? { listen } : {}),
+          ...(effectiveListen ? { listen: effectiveListen } : {}),
         };
       }
 
@@ -246,15 +270,29 @@ export class ResponsesAgent implements Agent {
       });
       // tools.call never throws, so one failing tool does not stop the others.
       const records = await Promise.all(
-        calls.map((call) =>
-          toolSet.call(String(call.name), String(call.arguments ?? '{}'), {
+        calls.map(async (call): Promise<ToolCallRecord & { output: string }> => {
+          const name = String(call.name);
+          const argumentsJson = String(call.arguments ?? '{}');
+          if (failedTools.has(name)) {
+            log.warn(`tool ${name} not retried: it already failed in this turn`, { turn: turnNumber, round });
+            const output = `error: ${name} failed earlier in this turn and was not retried. Tell the user what failed; do not call it again in this turn.`;
+            return {
+              name,
+              arguments: argumentsJson,
+              result: output,
+              output,
+              ok: false,
+              durationMs: 0,
+            };
+          }
+          return toolSet.call(name, argumentsJson, {
             signal,
             session,
             turnNumber,
             deadlineAtMs: context.deadlineAtMs ?? null,
             deviceId: context.deviceId ?? null,
-          }),
-        ),
+          });
+        }),
       );
       for (const [index, record] of records.entries()) {
         // "pending" is not a success: the tool did not run (confirm-by-voice).
@@ -264,7 +302,13 @@ export class ResponsesAgent implements Agent {
             ? 'ok'
             : 'failed';
         log.info(`tool ${record.name} ${status} in ${record.durationMs} ms`, { turn: turnNumber, round });
-        if (!record.ok) log.debug(`tool ${record.name} error`, { result: record.result.slice(0, 300) });
+        if (!record.ok) {
+          failedTools.add(record.name);
+          log.warn(`tool ${record.name} failed: ${record.result.slice(0, 300)}`, {
+            turn: turnNumber,
+            round,
+          });
+        }
         toolCalls.push({
           name: record.name,
           arguments: record.arguments,
@@ -273,8 +317,13 @@ export class ResponsesAgent implements Agent {
           durationMs: record.durationMs,
           ...(record.server ? { server: record.server } : {}),
           ...(record.pending ? { pending: true } : {}),
+          ...(record.errorDetail ? { errorDetail: record.errorDetail } : {}),
         });
-        input.push({ type: 'function_call_output', call_id: calls[index]?.call_id, output: record.output });
+        // The failure is the model's to report, with the tool's own message.
+        const output = record.ok
+          ? record.output
+          : `${record.output}\n\n[the tool call failed: tell the user exactly what failed and what to do next; do not call this tool again in this turn]`;
+        input.push({ type: 'function_call_output', call_id: calls[index]?.call_id, output });
       }
     }
 

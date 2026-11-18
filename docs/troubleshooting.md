@@ -6,10 +6,11 @@ prints the fix for each failure. The same checks are on the status page.
 
 Then look at the app log (`docker compose logs -f app`) and, on the Echo,
 `/data/local/hassmic/boot.log`. Useful lines per turn: `[pipeline] heard:` and
-`reply:`, `[agent] tool <name> ok|failed|pending … {"turn","round"}`,
-`[agent] turn N: an action waits for a spoken yes`, and `[confirm]` for the
-confirm-by-voice barrier. `LOG_LEVEL=debug` adds the tool names of every model
-round and the start of a failed tool's error (it may contain mailbox data).
+`reply:`, `[pipeline] ending microphone capture` (VAD reason and audio
+positions), `[agent] tool <name> ok|failed|pending … {"turn","round"}`, with a
+`warn` line carrying a failed tool's message, `[agent] turn N: an action waits
+for a spoken yes`, and `[confirm]` for the confirm-by-voice barrier.
+`LOG_LEVEL=debug` adds the tool names of every model round.
 
 | Symptom | Cause / fix |
 |---|---|
@@ -26,6 +27,8 @@ round and the start of a failed tool's error (it may contain mailbox data).
 | Clock still 2010 / "Clock sent: –" | The Echo has no key, so the link is plaintext (`boot.log`: `clock: … not set …`), or hassmic has not asked yet (it asks after its start and every 6 h) |
 | A setting changed in `cortecho.env` does nothing | Behaviour settings are imported only on a fresh database. Change them in the UI (see [configuration](configuration.md)) |
 | Follow-up never comes | The model did not call `listen_for_reply` (see the turn's tool calls in the UI), or the answer did not end with "?" in `question` mode; the Echo's wake sound may also be off (the follow-up still listens) |
+| Follow-up closes before you answer | Fixed 2026-11-18: the Echo's wake sound (and its echo tail) was counted as speech, then 800 ms of room silence ended the run. A follow-up now has a **2 s VAD guard**; an answer inside it is found by an STT check of the opening (`[pipeline] follow-up: checking the opening audio`, `reason: vad-wake-sound-check`) and answers after it are the VAD's. Check `[pipeline] ending microphone capture`: `audioMs − elapsedMs ≈ 800` is hassmic's lead-in. If it returns, see [the incident note](incidents/2026-11-18-follow-up-dropped.md); `DEBUG_AUDIO_DIR` keeps each follow-up's WAV in `data/audio/` |
+| A tool failed and the assistant carried on as if nothing happened | Fixed 2026-11-18: the failure is now a `warn` log line, a red tool call in the status page (click it for the error and stack), and a tool that fails cannot be retried in the same turn — the model must report it |
 | The Echo reads out `<tool_call>{…}` | No longer spoken: the model wrote a tool call as text. The log shows `[agent] model wrote … as text`; a `listen_for_reply` written this way still keeps the microphone open, any other is dropped (not run). If it keeps happening, try another model |
 | Asked to confirm the same action twice | See the `[confirm]` log lines and [connectors troubleshooting](connectors.md#troubleshooting) |
 | `OPENAI_API_KEY missing` on the status page | The key is not in Settings. Add it under **Settings → Advanced** |

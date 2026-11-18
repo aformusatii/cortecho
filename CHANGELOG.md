@@ -6,6 +6,27 @@ All notable changes to Cortecho are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Follow-ups no longer end on the Echo's wake sound.** hassmic plays its
+  650 ms wake sound as a follow-up opens the mic; the VAD counted the echo as
+  speech and closed the capture after 800 ms of silence (~1.3 s in) instead of
+  waiting the requested time. The VAD is now deaf for the first **2 s** of a
+  follow-up, while all audio is still captured from the first byte; loud audio
+  past the sound's measured ~760 ms echo tail, once quiet, is transcribed by
+  STT (`reason: vad-wake-sound-check`), so an answer given inside those 2 s is
+  heard too. Answers after the guard are the VAD's as usual.
+  See [the incident note](docs/incidents/2026-11-18-follow-up-dropped.md).
+- **A pending spoken yes always keeps the microphone open.** Even when the
+  model asks for it in a sentence without a question mark and forgets
+  `listen_for_reply` (as in “If you say yes, I’ll save it.”), the reply now
+  carries `continue_conversation` — unless `followUp.mode` is `never`.
+- **Tool failures are visible and are not retried silently.** A failed call
+  logs its message at `warn`, is red and openable (arguments, error, stack) on
+  the status page, and cannot be called again in the same turn: the model gets
+  the connector's error and must tell the user. A confirmed action that fails
+  can no longer arm a second “say yes” in that turn.
+
 ### Added
 
 - **MCP connectors**: connect Gmail, Google Calendar, Home Assistant or any MCP

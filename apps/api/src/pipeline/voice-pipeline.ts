@@ -44,6 +44,31 @@ const FOLLOW_UP_WINDOW_MS = 15_000;
  * its lead-in and our transcription start.
  */
 const FOLLOW_UP_LISTEN_LIMIT_MS = 27_000;
+/**
+ * The Echo plays its wake sound (stock ui_wakesound: 650 ms) as a follow-up
+ * opens the mic, and the echo canceller leaves part of it in the stream. It is
+ * not the user's answer: ignore speech for this long after hassmic's 800 ms
+ * lead-in.
+ *
+ * 650 ms was the sound's own length and too short: the residual plus the room's
+ * tail lasted ~760 ms, and the 110 ms past the guard was enough for minSpeechMs
+ * (150 ms over a couple of frames), so 800 ms of room silence ended the
+ * follow-up at 1.57 s again (2026-11-18, second occurrence). A real answer in
+ * the same log ended 1.27-1.60 s into the live audio, so 1000 ms covered the
+ * sound with margin.
+ *
+ * The owner asked for a longer, certain guard: 2 s with no VAD decision at all,
+ * and no audio blind spot. The VAD stays deaf for the 2 s exactly as asked;
+ * `checkOpening` below covers that window with STT, so an answer given inside
+ * the guard is still heard (answers after it are the VAD's).
+ */
+const FOLLOW_UP_START_GUARD_MS = 2000;
+/**
+ * Live-audio position where the Echo's own wake sound (650 ms) and its measured
+ * echo tail (to ~760 ms) are over. Loud audio past this, inside the guard, is
+ * the user, not the sound: that is what `checkOpening` transcribes.
+ */
+const WAKE_SOUND_TAIL_MS = 900;
 
 export type PipelineOptions = {
   client: EsphomeClient;
@@ -116,6 +141,14 @@ type ActiveTurn = import('@cortecho/shared').SearchDisplay & {
   vad: EndOfSpeechDetector | null;
   audio: Buffer[];
   eager: EagerTranscript | null;
+  /** Text already transcribed in the follow-up's opening check; skips the final STT. */
+  forcedText?: string;
+  /** The follow-up opening was checked (one check per turn, right or wrong). */
+  openingChecked?: boolean;
+  /** The opening check is still transcribing; hold the no-speech end until it says. */
+  openingChecking?: boolean;
+  /** The wait expired while the opening check ran: end when it resolves with nothing. */
+  pendingNoSpeech?: boolean;
   /** Listening: the wall-clock bound. After that: no reply handed over in time. */
   deadline: NodeJS.Timeout | null;
   /** The turn deadline as a timestamp, for connector call budgets. */
@@ -218,7 +251,9 @@ export class VoicePipeline {
     const snapshot = this.options.settings();
     const settings = snapshot.settings;
     const followUp = Date.now() < this.followUpUntilMs;
-    const vadOptions = followUp ? followUpVad(settings.vad, this.followUpWaitMs) : settings.vad;
+    const vadOptions: Omit<VadOptions, 'sampleRate'> = followUp
+      ? followUpVad(settings.vad, this.followUpWaitMs)
+      : settings.vad;
     this.followUpUntilMs = 0;
     this.followUpWaitMs = null;
     log.info(followUp ? 'follow-up turn started' : 'turn started', {
@@ -229,6 +264,7 @@ export class VoicePipeline {
         noSpeechTimeoutMs: vadOptions.noSpeechTimeoutMs,
         endSilenceMs: vadOptions.endSilenceMs,
         maxUtteranceMs: vadOptions.maxUtteranceMs,
+        startGuardMs: vadOptions.startGuardMs,
       },
     });
 
@@ -279,6 +315,12 @@ export class VoicePipeline {
       turn.audio.push(audio.data);
       const decision = turn.vad.push(audio.data);
       if (decision === 'no-speech') {
+        // The opening check may still be transcribing an answer from the
+        // guard window: its result decides, not the clock.
+        if (turn.openingChecking) {
+          turn.pendingNoSpeech = true;
+          return;
+        }
         this.endListening(turn, 'no-speech', 'vad-no-speech-timeout');
         return;
       }
@@ -292,6 +334,8 @@ export class VoicePipeline {
         return;
       }
       this.transcribeEarly(turn);
+      // The VAD is deaf inside the start guard; STT covers that window.
+      this.checkOpening(turn);
     }
     if (audio.end) {
       // The Echo heard the end of the request itself (micend, setting end_of_request).
@@ -311,6 +355,7 @@ export class VoicePipeline {
       | 'vad-no-speech-timeout'
       | 'vad-silence-after-speech'
       | 'vad-max-utterance'
+      | 'vad-wake-sound-check'
       | 'echo-audio-end',
   ): void {
     if (turn.finished || turn.phase !== 'listening') return;
@@ -324,6 +369,7 @@ export class VoicePipeline {
       speechHeard: vad?.speechHeard,
       silenceMs: vad?.silenceMs,
       speechEndAtMs: vad?.speechEndAtMs,
+      lastLoudAtMs: vad?.lastLoudAtMs,
       noiseFloorDb: vad?.noiseFloor,
     });
     turn.phase = 'thinking';
@@ -363,9 +409,56 @@ export class VoicePipeline {
     };
   }
 
-  /** The text of the utterance: from the early transcription when it heard all of it, else a new one. */
+  /**
+   * A follow-up starts with a 2 s VAD guard (the Echo's wake sound lives
+   * there). The guard is intentionally deaf, but the audio is kept: if it held
+   * something louder than the Echo's own sound and has gone quiet, transcribe
+   * that opening and use it. That covers an answer given inside the guard
+   * without letting the sound itself end the turn — the transcript decides.
+   */
+  private checkOpening(turn: ActiveTurn): void {
+    const vad = turn.vad;
+    if (!vad || !turn.followUp || turn.openingChecked || vad.speechHeard) return;
+    if (vad.liveStart === null) return;
+    // Only the Echo's own sound so far: nothing of the user's to transcribe.
+    if (vad.lastLoudAtMs <= vad.liveStart + WAKE_SOUND_TAIL_MS) return;
+    // Still in the guard, or the sound is still going on.
+    if (vad.audioMs < vad.guardEndMs) return;
+    if (vad.audioMs - vad.lastLoudAtMs < turn.settings.vad.endSilenceMs) return;
+    turn.openingChecked = true;
+    turn.openingChecking = true;
+    const pcm = this.audioUpTo(turn, vad.lastLoudAtMs + SPEECH_TAIL_MS);
+    log.info('follow-up: checking the opening audio (the VAD is deaf for the wake sound)', {
+      audioMs: vad.audioMs,
+      lastLoudAtMs: vad.lastLoudAtMs,
+      guardEndMs: vad.guardEndMs,
+    });
+    const finish = (text: string | null): void => {
+      turn.openingChecking = false;
+      if (turn.finished || turn.phase !== 'listening') return;
+      if (text !== null && isUsableTranscript(text)) {
+        log.info(`heard in the follow-up's opening: "${text}"`);
+        turn.forcedText = text;
+        this.endListening(turn, 'speech', 'vad-wake-sound-check');
+        return;
+      }
+      log.info('follow-up: the opening held only the Echo’s own sound');
+      // The wait ran out while the check was still going: end it now.
+      if (turn.pendingNoSpeech) this.endListening(turn, 'no-speech', 'vad-no-speech-timeout');
+    };
+    void this.options.services.stt
+      .transcribe(pcm, MIC_RATE, turn.abort.signal, turn.settings)
+      .then(finish, (error: unknown) => {
+        if (!turn.finished && turn.phase === 'listening')
+          log.warn(`follow-up opening check failed: ${errorMessage(error)}`);
+        finish(null);
+      });
+  }
+
+  /** The text of the utterance: from the opening check or the early transcription when either heard it all, else a new one. */
   private async transcribe(turn: ActiveTurn, pcm: Buffer): Promise<string> {
     const signal = turn.abort.signal;
+    if (turn.forcedText !== undefined) return turn.forcedText;
     const eager = turn.eager;
     if (eager && eager.speechEndAtMs === turn.vad?.speechEndAtMs) {
       const result = await eager.result;
@@ -431,6 +524,10 @@ export class VoicePipeline {
     const signal = turn.abort.signal;
     const early = this.earlyReply(turn);
     try {
+      // Diagnostic for the wake-sound guard: keep the whole follow-up audio,
+      // including the 800 ms lead-in and the Echo's own sound, even when
+      // nothing was recognised. A no-op unless DEBUG_AUDIO_DIR is set.
+      if (turn.followUp) this.saveDebugWav(Buffer.concat(turn.audio));
       if (heard === 'no-speech') {
         this.endQuietly(turn);
         return;
@@ -918,6 +1015,13 @@ export class VoicePipeline {
     return all.subarray(0, endByte);
   }
 
+  /** The captured audio up to an audio position (the opening check's slice). */
+  private audioUpTo(turn: ActiveTurn, endMs: number): Buffer {
+    const all = Buffer.concat(turn.audio);
+    const endByte = Math.min(Math.floor((endMs / 1000) * MIC_RATE) * 2, all.length);
+    return all.subarray(0, endByte);
+  }
+
   /** DEBUG_AUDIO_DIR: one WAV per utterance, newest DEBUG_AUDIO_KEEP kept. */
   private saveDebugWav(pcm: Buffer): void {
     const { audioDir, audioKeep } = this.options.config.debug;
@@ -965,16 +1069,21 @@ type ListenLimits = Pick<VadOptions, 'noSpeechTimeoutMs' | 'maxUtteranceMs'>;
 
 /**
  * The VAD limits of a follow-up run: wait `waitMs` for the answer to start,
- * and still give the answer its usual length, within hassmic's own limit.
+ * still give the answer its usual length within hassmic's own limit, and skip
+ * the Echo's wake sound at the start (VadOptions.startGuardMs).
  */
-export function followUpVad<T extends ListenLimits>(vad: T, waitMs: number | null): T {
-  if (waitMs === null) return vad;
+export function followUpVad<T extends ListenLimits>(
+  vad: T,
+  waitMs: number | null,
+): T & { startGuardMs: number } {
+  const guarded = { ...vad, startGuardMs: FOLLOW_UP_START_GUARD_MS };
+  if (waitMs === null) return guarded;
   const noSpeechTimeoutMs = Math.min(waitMs, FOLLOW_UP_LISTEN_LIMIT_MS);
   const maxUtteranceMs = Math.max(
     vad.maxUtteranceMs,
     Math.min(noSpeechTimeoutMs + vad.maxUtteranceMs, FOLLOW_UP_LISTEN_LIMIT_MS),
   );
-  return { ...vad, noSpeechTimeoutMs, maxUtteranceMs };
+  return { ...guarded, noSpeechTimeoutMs, maxUtteranceMs };
 }
 
 /** The turn's settings with the form's unsaved voice values, for the test phrase. */

@@ -22,6 +22,7 @@ export const BASE_RULES = [
   'Never use markdown, lists, emojis, URLs or code. Spell out symbols and units.',
   'The current date and time come with every request; use them for questions about the time, date or day.',
   'Use the tools when they help; never guess device states.',
+  'When a tool call fails, say what failed; never retry that tool in the same request.',
   'If a request is unclear, ask one short question back.',
 ] as const;
 

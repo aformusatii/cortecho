@@ -171,6 +171,143 @@ describe('ResponsesAgent', () => {
     expect(String(outputs?.[0]?.output)).toContain('"startedWith":["slow_one","slow_two"]');
   });
 
+  it('does not retry a failed tool in the same turn and tells the model to report it', async () => {
+    let runs = 0;
+    const requests: CreateResponseRequest[] = [];
+    const responses: FakeResponse[] = [
+      {
+        status: 'completed',
+        output: [{ type: 'function_call', call_id: 'c1', name: 'boom', arguments: '{}' }],
+      },
+      {
+        status: 'completed',
+        output: [{ type: 'function_call', call_id: 'c2', name: 'boom', arguments: '{}' }],
+      },
+      message('It failed.'),
+    ];
+    const settings = makeSettings();
+    const session = { history: [], lastTurnAt: 0 };
+    const agent = new ResponsesAgent({
+      createResponse: async (request) => {
+        requests.push(structuredClone(request));
+        return responses.shift() as FakeResponse;
+      },
+      tools: new ToolRegistry().register({
+        name: 'boom',
+        description: 'Always fails.',
+        parameters: { type: 'object' as const, properties: {} },
+        handler: async () => {
+          runs += 1;
+          throw new Error('kaput 403');
+        },
+      }),
+    });
+
+    const answer = await agent.reply('do it', signal, undefined, { settings, session });
+
+    // The handler ran once: the same-turn retry was refused, not executed.
+    expect(runs).toBe(1);
+    expect(answer.text).toBe('It failed.');
+    expect(answer.toolCalls).toEqual([
+      expect.objectContaining({ name: 'boom', ok: false, errorDetail: expect.stringContaining('kaput 403') }),
+      expect.objectContaining({
+        name: 'boom',
+        ok: false,
+        result: expect.stringContaining('was not retried'),
+      }),
+    ]);
+    // The model got the error with its message and an instruction to report it.
+    const first = requests[1]?.input.filter((i) => i.type === 'function_call_output');
+    expect(String(first?.[0]?.output)).toContain('error: kaput 403');
+    expect(String(first?.[0]?.output)).toContain('tell the user exactly what failed');
+    const retry = requests[2]?.input.filter((i) => i.type === 'function_call_output');
+    expect(String(retry?.[1]?.output)).toContain('failed earlier in this turn and was not retried');
+  });
+
+  it('keeps the microphone open when a spoken yes is pending, even without a question mark', async () => {
+    const requests: CreateResponseRequest[] = [];
+    const responses: FakeResponse[] = [
+      {
+        status: 'completed',
+        output: [{ type: 'function_call', call_id: 'c1', name: 'gmail__draft', arguments: '{}' }],
+      },
+      // No question mark and no listen_for_reply: the model can ask for the yes
+      // in a sentence ("If you say yes, I'll save it.") and forget the tool.
+      message("If you say yes, I'll save it."),
+    ];
+    const settings = makeSettings({ 'followUp.mode': 'tool' });
+    const session = { history: [], lastTurnAt: 0 };
+    const agent = new ResponsesAgent({
+      createResponse: async (request) => {
+        requests.push(structuredClone(request));
+        return responses.shift() as FakeResponse;
+      },
+      tools: new ToolRegistry().addSource({
+        id: 'mcp',
+        snapshot: () => [
+          {
+            name: 'gmail__draft',
+            description: 'Draft an email (needs a spoken yes).',
+            parameters: { type: 'object' as const, properties: {} },
+            source: 'mcp' as const,
+            server: 'gmail',
+            policy: 'confirm' as const,
+            handler: async () => {
+              throw new Error('must not run before the yes');
+            },
+            gate: async () => ({
+              allow: false as const,
+              ok: true,
+              pending: true,
+              output: 'pending: say what you will do and ask for a yes',
+            }),
+          },
+        ],
+      }),
+    });
+
+    const answer = await agent.reply('send a joke', signal, undefined, { settings, session });
+
+    expect(answer.text).toBe("If you say yes, I'll save it.");
+    expect(answer.toolCalls).toEqual([expect.objectContaining({ pending: true })]);
+    expect(answer.listen).toEqual({ waitMs: 8000 });
+    expect(requests[1]?.input).toContainEqual({
+      type: 'function_call_output',
+      call_id: 'c1',
+      output: 'pending: say what you will do and ask for a yes',
+    });
+  });
+
+  it("does not keep the microphone open for a pending yes when follow-ups are 'never'", async () => {
+    const responses: FakeResponse[] = [
+      {
+        status: 'completed',
+        output: [{ type: 'function_call', call_id: 'c1', name: 'gmail__draft', arguments: '{}' }],
+      },
+      message("If you say yes, I'll save it."),
+    ];
+    const settings = makeSettings(); // followUp.mode 'never'
+    const session = { history: [], lastTurnAt: 0 };
+    const agent = new ResponsesAgent({
+      createResponse: async () => responses.shift() as FakeResponse,
+      tools: new ToolRegistry().addSource({
+        id: 'mcp',
+        snapshot: () => [
+          {
+            name: 'gmail__draft',
+            description: 'Draft an email.',
+            parameters: { type: 'object' as const, properties: {} },
+            source: 'mcp' as const,
+            handler: async () => 'unused',
+            gate: async () => ({ allow: false as const, ok: true, pending: true, output: 'pending' }),
+          },
+        ],
+      }),
+    });
+    const answer = await agent.reply('send a joke', signal, undefined, { settings, session });
+    expect(answer.listen).toBeUndefined();
+  });
+
   it('leaves the memory untouched when a turn fails', async () => {
     const { reply, requests } = makeAgent([message('A'), { status: 'incomplete', output: [] }, message('C')]);
     await reply('one', signal);

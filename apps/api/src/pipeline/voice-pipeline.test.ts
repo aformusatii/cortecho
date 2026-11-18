@@ -294,6 +294,64 @@ describe('voice turns', () => {
     await echo.waitForIdle();
   });
 
+  it("does not take the Echo's wake sound at a follow-up start for the answer", async () => {
+    await setup();
+    await connected();
+    ctx.services.agentResult = async () => ({ text: 'Say yes.', toolCalls: [], listen: { waitMs: 4000 } });
+    // hassmic: 800 ms of digital silence (lead_in), then the mic opens with the
+    // 650 ms wake sound playing (core_pipeline_finish: "wake sound, then it
+    // listens"). Counting that as speech ended the follow-up after 800 ms of
+    // silence, ~1.3 s in, before the user could answer (2026-11-18).
+    echo.followUpAudio = Buffer.concat([
+      Buffer.alloc(16_000 * 2 * 0.8),
+      syntheticSpeech({ leadSilenceMs: 0, speechMs: 760, trailSilenceMs: 0, amplitude: 0.3 }),
+    ]);
+    await echo.runPipeline(syntheticSpeech());
+    await waitUntil(() => ctx.turns.latest(5).length === 2, 8000);
+    await waitUntil(() => echo.eventTypes().filter((t) => t === 'run_end').length === 2);
+    expect(
+      ctx.turns
+        .latest(5)
+        .map((t) => t.outcome)
+        .sort(),
+    ).toEqual(['answered', 'no-speech']);
+    // Only the first turn was transcribed: the follow-up waited its 4 s
+    // instead of deciding on the wake sound and sending it to STT.
+    expect(ctx.services.calls.stt).toBe(1);
+    await echo.waitForIdle();
+  });
+
+  it("hears an answer given inside a follow-up's 2 s guard (the VAD is deaf, STT is not)", async () => {
+    await setup();
+    await connected();
+    let agentCalls = 0;
+    ctx.services.agentResult = async (text) => {
+      agentCalls += 1;
+      if (agentCalls === 1) return { text: 'Do you want it?', toolCalls: [], listen: { waitMs: 4000 } };
+      return { text: `Okay: ${text}`, toolCalls: [] };
+    };
+    let sttCalls = 0;
+    ctx.services.sttResult = async () => (++sttCalls === 1 ? 'send an email' : 'yes');
+    // hassmic's lead-in, the wake sound, a pause, then "yes" at ~1 s of live
+    // audio — inside the 2 s VAD guard. The audio is kept, so the opening check
+    // transcribes it and the answer is not lost.
+    echo.followUpAudio = Buffer.concat([
+      Buffer.alloc(16_000 * 2 * 0.8),
+      syntheticSpeech({ leadSilenceMs: 0, speechMs: 760, trailSilenceMs: 0, amplitude: 0.3 }),
+      syntheticSpeech({ leadSilenceMs: 0, speechMs: 0, trailSilenceMs: 200 }),
+      syntheticSpeech({ leadSilenceMs: 0, speechMs: 400, trailSilenceMs: 0, amplitude: 0.3 }),
+      syntheticSpeech({ leadSilenceMs: 0, speechMs: 0, trailSilenceMs: 3000 }),
+    ]);
+    await echo.runPipeline(syntheticSpeech());
+    await waitUntil(() => ctx.turns.latest(5).length === 2, 8000);
+    await waitUntil(() => echo.eventTypes().filter((t) => t === 'run_end').length === 2);
+    const [second, first] = ctx.turns.latest(5);
+    expect(first).toMatchObject({ outcome: 'answered', reply: 'Do you want it?' });
+    expect(second).toMatchObject({ outcome: 'answered', transcript: 'yes', reply: 'Okay: yes' });
+    expect(ctx.services.calls.stt).toBeGreaterThanOrEqual(2);
+    await echo.waitForIdle();
+  });
+
   it('does not listen after a question mark alone (the fallback is off by default)', async () => {
     await setup();
     await connected();
@@ -505,8 +563,18 @@ describe('expectsAnswer (FOLLOW_UP_MODE)', () => {
 describe('followUpVad', () => {
   const vad = { noSpeechTimeoutMs: 8000, maxUtteranceMs: 15000, endSilenceMs: 800 };
   it('waits as asked and leaves the answer its length, within the 30 s hassmic allows', () => {
-    expect(followUpVad(vad, null)).toBe(vad);
-    expect(followUpVad(vad, 5000)).toEqual({ ...vad, noSpeechTimeoutMs: 5000, maxUtteranceMs: 20000 });
-    expect(followUpVad(vad, 20000)).toEqual({ ...vad, noSpeechTimeoutMs: 20000, maxUtteranceMs: 27000 });
+    expect(followUpVad(vad, null)).toEqual({ ...vad, startGuardMs: 2000 });
+    expect(followUpVad(vad, 5000)).toEqual({
+      ...vad,
+      startGuardMs: 2000,
+      noSpeechTimeoutMs: 5000,
+      maxUtteranceMs: 20000,
+    });
+    expect(followUpVad(vad, 20000)).toEqual({
+      ...vad,
+      startGuardMs: 2000,
+      noSpeechTimeoutMs: 20000,
+      maxUtteranceMs: 27000,
+    });
   });
 });

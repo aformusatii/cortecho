@@ -110,8 +110,16 @@ export type ConnectorPromptLine = {
 };
 
 const MAX_RESULT_CHARS = 4000;
+/** The stack kept for the status page: enough to find the line, not a log file. */
+const MAX_ERROR_DETAIL = 6000;
 /** A tool never eats the last seconds of a voice turn. */
 const DEADLINE_RESERVE_MS = 3000;
+
+/** A failed call's stack for the status page; a message-only result still shows something. */
+function errorDetail(error: unknown): string {
+  if (error instanceof Error) return error.stack ?? `${error.name}: ${error.message}`;
+  return String(error);
+}
 
 /**
  * The tools offered for one turn, frozen at its start. The agent asks this
@@ -182,9 +190,10 @@ export class ToolSet {
   ): Promise<ToolCallRecord & { output: string }> {
     const started = Date.now();
     const tool = this.byName.get(name);
-    const finish = (ok: boolean, output: string, extra: { pending?: boolean } = {}) => {
+    const finish = (ok: boolean, output: string, extra: { pending?: boolean; errorDetail?: string } = {}) => {
       const limit = tool?.maxResultChars ?? MAX_RESULT_CHARS;
       const truncated = output.length > limit ? `${output.slice(0, limit)}…` : output;
+      const detail = extra.errorDetail;
       return {
         name,
         arguments: argumentsJson,
@@ -194,6 +203,12 @@ export class ToolSet {
         durationMs: Date.now() - started,
         ...(tool?.server ? { server: tool.server } : {}),
         ...(extra.pending ? { pending: true } : {}),
+        ...(detail
+          ? {
+              errorDetail:
+                detail.length > MAX_ERROR_DETAIL ? `${detail.slice(0, MAX_ERROR_DETAIL)}…` : detail,
+            }
+          : {}),
       };
     };
 
@@ -225,7 +240,7 @@ export class ToolSet {
         const gate = await tool.gate(args, argumentsJson, runContext);
         if (!gate.allow) return finish(gate.ok ?? true, gate.output, gate.pending ? { pending: true } : {});
       } catch (error) {
-        return finish(false, `error: ${errorMessage(error)}`);
+        return finish(false, `error: ${errorMessage(error)}`, { errorDetail: errorDetail(error) });
       }
     }
 
@@ -248,7 +263,7 @@ export class ToolSet {
       ]);
       return finish(true, typeof result === 'string' ? result : JSON.stringify(result ?? null));
     } catch (error) {
-      return finish(false, `error: ${errorMessage(error)}`);
+      return finish(false, `error: ${errorMessage(error)}`, { errorDetail: errorDetail(error) });
     }
   }
 

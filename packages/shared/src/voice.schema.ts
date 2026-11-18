@@ -75,6 +75,8 @@ export type ToolCallRecord = {
   server?: string;
   /** A “confirm by voice” call that asked for the user’s yes and did not run yet. */
   pending?: boolean;
+  /** A failed call's stack trace (or the thrown value), for the status page. */
+  errorDetail?: string;
 };
 
 /**
