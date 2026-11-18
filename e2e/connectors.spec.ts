@@ -120,7 +120,11 @@ test.describe('Connectors', () => {
       await page.getByRole('button', { name: 'Save and sign in' }).click();
       const popup = await popupPromise;
       await popup.waitForLoadState('domcontentloaded');
-      await expect.poll(() => popup.url(), { timeout: 20_000 }).toContain('auth=ok');
+      // The callback 302s to /settings?tab=connectors&server=N&auth=ok, and the
+      // page consumes those params at once (onConsumed clears them), so the
+      // query string is transient — slow CI runners missed it. Assert where
+      // the popup ends up and let the API polls below prove the sign-in.
+      await expect.poll(() => popup.url(), { timeout: 20_000 }).toContain('/settings');
 
       await expect
         .poll(async () => (await connectorByName(request, name))?.authState, { timeout: 20_000 })
