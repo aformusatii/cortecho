@@ -32,6 +32,7 @@ export function fakeServices() {
     stt: 0,
     agent: [] as string[],
     tts: [] as string[],
+    sttAudio: [] as Buffer[],
     sttSettings: [] as Settings[],
     agentSettings: [] as Settings[],
     agentDevices: [] as (PromptDevice | null)[],
@@ -39,7 +40,7 @@ export function fakeServices() {
     ttsSettings: [] as Settings[],
   };
   const services: VoiceServices & {
-    sttResult: () => Promise<string>;
+    sttResult: (pcm: Buffer) => Promise<string>;
     agentResult: (text: string, onText?: (textSoFar: string) => void) => Promise<AgentReply>;
     ttsChunks: () => Buffer[];
     calls: typeof calls;
@@ -51,10 +52,11 @@ export function fakeServices() {
     // 0.5 s of 24 kHz audio in 3 pieces
     ttsChunks: () => [Buffer.alloc(8000, 1), Buffer.alloc(8000, 2), Buffer.alloc(8000, 3)],
     stt: {
-      transcribe: async (_pcm, _sampleRate, _signal, settings) => {
+      transcribe: async (pcm, _sampleRate, _signal, settings) => {
         calls.stt += 1;
+        calls.sttAudio.push(Buffer.from(pcm));
         calls.sttSettings.push(settings);
-        return services.sttResult();
+        return services.sttResult(pcm);
       },
     },
     agent: {

@@ -232,6 +232,35 @@ const settings: readonly SettingDescriptor[] = [
     advanced: true,
     env: 'STT_EAGER_SILENCE_MS',
   },
+  {
+    key: 'stt.wakeSoundSkipMs',
+    section: 'understanding',
+    label: 'Skip the Echo’s wake sound when retrying',
+    help: 'The Echo’s own ~650 ms chime is captured at the start of every request, and gpt-transcribe can return nothing for such a clip. When an attempt returns nothing, retry it without the first 650 ms of live audio. 0 = no such retry (the other retry still runs).',
+    schema: z.number().int().min(0).max(3000),
+    min: 0,
+    max: 3000,
+    step: 50,
+    default: 650,
+    control: 'number',
+    unit: 'ms',
+    perEcho: false,
+    applies: 'next-turn',
+    env: 'STT_WAKE_SOUND_SKIP_MS',
+  },
+  {
+    key: 'stt.retryOnEmpty',
+    section: 'understanding',
+    label: 'Retry an empty transcript',
+    help: 'When speech was heard but the transcriber returned nothing, try once more, then once without the Echo’s wake sound. At most two extra calls, only for a request that was about to fail. Off = end quietly as before.',
+    schema: z.boolean(),
+    default: true,
+    control: 'switch',
+    perEcho: false,
+    applies: 'next-turn',
+    advanced: true,
+    env: 'STT_RETRY_ON_EMPTY',
+  },
   // --- Thinking -------------------------------------------------------------
   {
     key: 'agent.model',
@@ -771,7 +800,15 @@ export type Settings = {
     sessionIdleMinutes: number;
     apologyText: string;
   };
-  stt: { model: string; languages: string[]; prompt: string; eagerSilenceMs: number };
+  stt: {
+    model: string;
+    languages: string[];
+    prompt: string;
+    eagerSilenceMs: number;
+    /** Audio dropped from the start of the retry clip (the Echo's wake chime); 0 = no such retry. */
+    wakeSoundSkipMs: number;
+    retryOnEmpty: boolean;
+  };
   agent: {
     model: string;
     reasoningEffort: ReasoningEffortSetting;
@@ -819,6 +856,8 @@ export function buildSettings(values: Readonly<Record<string, unknown>>): Settin
       languages: get('stt.languages'),
       prompt: get('stt.prompt'),
       eagerSilenceMs: get('stt.eagerSilenceMs'),
+      wakeSoundSkipMs: get('stt.wakeSoundSkipMs'),
+      retryOnEmpty: get('stt.retryOnEmpty'),
     },
     agent: {
       model: get('agent.model'),

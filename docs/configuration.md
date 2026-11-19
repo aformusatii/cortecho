@@ -101,6 +101,8 @@ per-Echo list edited on the Echo's **Connectors** tab (hidden from Tuning).
 | `stt.model` | Speech-to-text model | `gpt-transcribe` | `STT_MODEL` | no |
 | `stt.languages` | Languages | (auto) | `STT_LANGUAGES` | yes |
 | `stt.prompt` | Recognition hints | (empty) | `STT_PROMPT` | yes |
+| `stt.wakeSoundSkipMs` | Skip the Echo's wake sound when retrying | `650` | `STT_WAKE_SOUND_SKIP_MS` | no |
+| `stt.retryOnEmpty` | Retry an empty transcript | `true` | `STT_RETRY_ON_EMPTY` | no |
 | `stt.eagerSilenceMs` | Start transcribing early | `300` | `STT_EAGER_SILENCE_MS` | no |
 | `agent.model` | Model | `gpt-5.4-mini` | `AGENT_MODEL` | no |
 | `agent.reasoningEffort` | Reasoning effort | `low` | `AGENT_REASONING_EFFORT` | no |

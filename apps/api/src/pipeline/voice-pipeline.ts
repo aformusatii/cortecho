@@ -69,6 +69,22 @@ const FOLLOW_UP_START_GUARD_MS = 2000;
  * the user, not the sound: that is what `checkOpening` transcribes.
  */
 const WAKE_SOUND_TAIL_MS = 900;
+/*
+ * The wake sound is not only a VAD problem. Every wake run's stream starts
+ * with hassmic's 800 ms of digital silence and then the Echo's own ~650 ms
+ * chime, and that chime is uploaded to STT too. On 2026-11-19 `gpt-transcribe`
+ * answered an empty string (`languages: []`) for two requests that were
+ * otherwise intelligible; the same bytes transcribed correctly once the chime
+ * was zeroed out (the clips are in `data/audio/`).
+ *
+ * The trim runs on the RECOVERY attempt only, not on the first upload: on the
+ * borderline clip that usually transcribed correctly, cutting the chime first
+ * turned a correct reading into a consistent misrecognition ("What was it
+ * done?"), while the untrimmed clip was right most runs. So a normal turn is
+ * unchanged; `retryTranscription` retries the same clip once, then retries it
+ * without `stt.wakeSoundSkipMs` (default 650) when the result is still empty.
+ * See docs/incidents/2026-11-19-wake-chime-empty-transcript.md.
+ */
 
 export type PipelineOptions = {
   client: EsphomeClient;
@@ -463,10 +479,60 @@ export class VoicePipeline {
     if (eager && eager.speechEndAtMs === turn.vad?.speechEndAtMs) {
       const result = await eager.result;
       signal.throwIfAborted();
-      if ('text' in result) return result.text;
+      if ('text' in result) {
+        // An empty early result is not final any more: it used to be returned
+        // as-is, so one flaky empty answer (2026-11-19) lost the whole
+        // request. Return it to runVoiceTurn, which calls retryTranscription.
+        if (!isUsableTranscript(result.text)) log.info('early transcription heard nothing');
+        return result.text;
+      }
       log.warn(`early transcription failed, trying again: ${errorMessage(result.error)}`);
     }
     return this.options.services.stt.transcribe(pcm, MIC_RATE, signal, turn.settings);
+  }
+
+  /**
+   * A transcript without a letter or digit means "nothing usable was said".
+   * For a real request that is sometimes wrong: `gpt-transcribe` can return an
+   * empty string for a clip whose loudest part is the Echo's wake chime, and
+   * the same audio is not deterministic run to run (2026-11-19, turns 184/185).
+   * So before ending the turn quietly:
+   *
+   *   1. transcribe the same clip once more (cheap, and fixes the flaky case);
+   *   2. if it is still empty, retry without the first `stt.wakeSoundSkipMs`
+   *      of live audio — the Echo's wake chime — which is the case that made
+   *      the model say `languages: []` at all.
+   *
+   * The trim is deliberately not used first: on the clip that usually worked,
+   * cutting the chime up front changed a correct reading into a consistent
+   * misrecognition, while the untrimmed upload was right most runs. At most
+   * two extra calls, only after the VAD already heard speech and only for a
+   * turn that was about to fail. `stt.retryOnEmpty` turns it off.
+   */
+  private async retryTranscription(turn: ActiveTurn, pcm: Buffer): Promise<string> {
+    if (!turn.settings.stt.retryOnEmpty) return '';
+    const { stt } = this.options.services;
+    const signal = turn.abort.signal;
+    log.warn('nothing usable recognised, transcribing again', {
+      model: turn.settings.stt.model,
+      wakeSoundSkipMs: turn.settings.stt.wakeSoundSkipMs,
+      audioMs: pcmDurationMs(pcm.length, MIC_RATE),
+    });
+    let text = await stt.transcribe(pcm, MIC_RATE, signal, turn.settings);
+    if (isUsableTranscript(text)) return text;
+
+    if (turn.settings.stt.wakeSoundSkipMs <= 0) return text;
+    const withoutWakeSound = this.trimmedAudio(turn, { skipWakeSound: true });
+    // sttStartMs refuses to skip past the speech end, so equal lengths mean
+    // there was nothing safe to remove (e.g. a very short utterance).
+    if (withoutWakeSound.length === 0 || withoutWakeSound.length >= pcm.length) return text;
+    log.warn('still nothing recognised, retrying without the Echo wake sound', {
+      audioMs: pcmDurationMs(withoutWakeSound.length, MIC_RATE),
+      wakeSoundSkipMs: turn.settings.stt.wakeSoundSkipMs,
+    });
+    this.saveDebugWav(withoutWakeSound, 'retry-no-wake-sound');
+    text = await stt.transcribe(withoutWakeSound, MIC_RATE, signal, turn.settings);
+    return text;
   }
 
   /**
@@ -533,15 +599,21 @@ export class VoicePipeline {
         return;
       }
 
-      // Trailing silence is cut off: less to upload, same text.
+      // Trailing silence is cut off: less to upload, same text. The Echo's
+      // wake chime stays in on the first attempt; it is removed only by the
+      // recovery retry (retryTranscription), see the note at sttStartMs.
       const pcm = this.trimmedAudio(turn);
       this.saveDebugWav(pcm);
 
-      const text = await this.transcribe(turn, pcm);
+      let text = await this.transcribe(turn, pcm);
       signal.throwIfAborted();
+      if (!isUsableTranscript(text)) {
+        text = await this.retryTranscription(turn, pcm);
+        signal.throwIfAborted();
+      }
       turn.timings.transcriptMs = this.elapsed(turn);
       if (!isUsableTranscript(text)) {
-        log.info('nothing usable recognised', { text });
+        log.warn('nothing usable recognised', { text, model: turn.settings.stt.model });
         turn.transcript = text || null;
         this.endQuietly(turn);
         return;
@@ -1007,12 +1079,47 @@ export class VoicePipeline {
     }
   }
 
-  private trimmedAudio(turn: ActiveTurn): Buffer {
+  /**
+   * Where the wake-sound-trimmed retry starts, in ms of captured audio.
+   *
+   * Every wake run begins with hassmic's 800 ms of digital silence (lead-in)
+   * and then the Echo's own ~650 ms wake chime. The VAD's `liveStart` is the
+   * first non-silent frame, i.e. the start of the mic stream (room noise), a
+   * few hundred ms before the chime's attack. `stt.wakeSoundSkipMs` (default
+   * 650, the stock chime's length) is added to it for the recovery retry;
+   * 0 disables that retry. This does not change listening or the VAD.
+   *
+   * Why not trim the first upload: on 2026-11-19's borderline clip the
+   * untrimmed audio transcribed correctly in most runs, while starting at the
+   * same point consistently misheard the request. The trim is only a way to
+   * get *some* text when the untrimmed clip produced none.
+   *
+   * Safety: `speechEndAtMs` includes the chime frames, so `start < speechEnd`
+   * refuses a skip that would consume the whole utterance (a chime-only turn
+   * has nothing to recover anyway).
+   */
+  private sttStartMs(turn: ActiveTurn): number {
+    const vad = turn.vad;
+    const skipMs = turn.settings.stt.wakeSoundSkipMs;
+    if (!vad || skipMs <= 0 || vad.liveStart === null) return 0;
+    const start = vad.liveStart + skipMs;
+    return start < vad.speechEndAtMs ? start : 0;
+  }
+
+  /**
+   * The utterance as uploaded: trailing silence cut. `skipWakeSound: true` is
+   * the recovery retry, which also starts after the Echo's wake chime.
+   */
+  private trimmedAudio(turn: ActiveTurn, options: { skipWakeSound?: boolean } = {}): Buffer {
     const all = Buffer.concat(turn.audio);
     if (!turn.vad?.speechHeard) return all;
     const endMs = Math.min(turn.vad.speechEndAtMs + SPEECH_TAIL_MS, pcmDurationMs(all.length, MIC_RATE));
-    const endByte = Math.floor((endMs / 1000) * MIC_RATE) * 2;
-    return all.subarray(0, endByte);
+    const startMs = options.skipWakeSound === true ? this.sttStartMs(turn) : 0;
+    const startByte = Math.min(Math.floor((startMs / 1000) * MIC_RATE) * 2, all.length);
+    const endByte = Math.min(Math.floor((endMs / 1000) * MIC_RATE) * 2, all.length);
+    // sttStartMs already refuses to start past speechEnd; the guard is for a
+    // degenerate buffer (e.g. a very short utterance) rather than a normal trim.
+    return endByte > startByte ? all.subarray(startByte, endByte) : all.subarray(0, endByte);
   }
 
   /** The captured audio up to an audio position (the opening check's slice). */
@@ -1023,12 +1130,16 @@ export class VoicePipeline {
   }
 
   /** DEBUG_AUDIO_DIR: one WAV per utterance, newest DEBUG_AUDIO_KEEP kept. */
-  private saveDebugWav(pcm: Buffer): void {
+  private saveDebugWav(pcm: Buffer, label?: string): void {
     const { audioDir, audioKeep } = this.options.config.debug;
     if (!audioDir) return;
     try {
       mkdirSync(audioDir, { recursive: true });
-      const file = path.join(audioDir, `utterance-${new Date().toISOString().replace(/[:.]/g, '-')}.wav`);
+      const suffix = label ? `-${label}` : '';
+      const file = path.join(
+        audioDir,
+        `utterance-${new Date().toISOString().replace(/[:.]/g, '-')}${suffix}.wav`,
+      );
       writeFileSync(file, pcmToWav(pcm, MIC_RATE));
       const wavs = readdirSync(audioDir)
         .filter((name) => name.startsWith('utterance-') && name.endsWith('.wav'))

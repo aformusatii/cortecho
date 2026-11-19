@@ -21,6 +21,39 @@ const ANSWER_EVENTS = [
 ];
 const QUIET_END = ['run_start', 'stt_start', 'stt_vad_end', 'error', 'run_end'];
 
+/** A sine tone, for modelling the Echo's own wake chime in the tests. */
+function tone(ms: number, amplitude: number, hz = 660): Buffer {
+  const frames = Math.round((16_000 * ms) / 1000);
+  const pcm = Buffer.alloc(frames * 2);
+  for (let i = 0; i < frames; i++) {
+    pcm.writeInt16LE(Math.round(Math.sin((2 * Math.PI * hz * i) / 16_000) * amplitude * 32767), i * 2);
+  }
+  return pcm;
+}
+
+function silence(ms: number): Buffer {
+  return Buffer.alloc(Math.round((16_000 * ms) / 1000) * 2);
+}
+
+/**
+ * Does the clip still carry the loud chime in its first 1.6 s? A sustained
+ * 300 ms above 0.3 models what made the real model answer "": a few boundary
+ * samples left by an exact trim must not count.
+ */
+function containsChime(pcm: Buffer): boolean {
+  const samples = Math.min(Math.floor(pcm.length / 2), 16_000 * 1.6);
+  let loud = 0;
+  for (let i = 0; i < samples; i += 1) {
+    if (Math.abs(pcm.readInt16LE(i * 2)) > 0.3 * 32767) loud += 1;
+  }
+  return loud >= 16_000 * 0.3;
+}
+
+/** hassmic: 800 ms of zeros, then the Echo's ~650 ms chime, a pause, the request, then room. */
+function wakeRunWithChime(): Buffer {
+  return Buffer.concat([silence(800), tone(650, 0.5), silence(250), tone(1200, 0.1, 220), silence(1200)]);
+}
+
 let echo: FakeEcho;
 let ctx: ReturnType<typeof createTestRuntime>;
 
@@ -507,6 +540,72 @@ describe('voice turns', () => {
     await waitUntil(() => ctx.pipeline.lastTurn !== null);
     expect(echo.played[0]?.sampleRate).toBe(16000);
     expect(Math.abs((echo.played[0]?.bytes ?? 0) - 16000)).toBeLessThanOrEqual(8); // 0.5 s at 16 kHz
+  });
+
+  // 2026-11-19: gpt-transcribe returned "" for two requests whose clips began
+  // with the Echo's wake chime; removing the chime made the same audio
+  // transcribe correctly. The first upload is deliberately unchanged (trimming
+  // it up front misheard a clip that normally worked), so the chime is removed
+  // only by the recovery retry. These tests pin that order and its off switch.
+  it('recovers a request the wake chime made unrecognisable', async () => {
+    await setup();
+    await connected();
+    ctx.services.sttResult = async (pcm) => (containsChime(pcm) ? '' : 'what time is it');
+    await echo.runPipeline(wakeRunWithChime());
+    await waitUntil(() => ctx.pipeline.lastTurn !== null);
+    expect(ctx.pipeline.lastTurn).toMatchObject({ outcome: 'answered', transcript: 'what time is it' });
+    // Unchanged first upload; the last attempt is the chime-trimmed recovery.
+    expect(containsChime(ctx.services.calls.sttAudio[0] ?? Buffer.alloc(0))).toBe(true);
+    expect(containsChime(ctx.services.calls.sttAudio.at(-1) ?? Buffer.alloc(0))).toBe(false);
+  });
+
+  it('retries the same clip once, then retries without the wake sound', async () => {
+    await setup();
+    await connected();
+    let calls = 0;
+    ctx.services.sttResult = async () => (++calls <= 2 ? '' : 'what time is it');
+    await echo.runPipeline(wakeRunWithChime());
+    await waitUntil(() => ctx.pipeline.lastTurn !== null);
+    expect(ctx.pipeline.lastTurn?.outcome).toBe('answered');
+    // Eager attempt, the same clip again, then the chime-trimmed clip.
+    expect(ctx.services.calls.stt).toBe(3);
+    expect(containsChime(ctx.services.calls.sttAudio.at(-1) ?? Buffer.alloc(0))).toBe(false);
+  });
+
+  it('leaves the first upload unchanged when the wake-chime clip transcribes', async () => {
+    await setup();
+    await connected();
+    ctx.services.sttResult = async () => 'what time is it';
+    await echo.runPipeline(wakeRunWithChime());
+    await waitUntil(() => ctx.pipeline.lastTurn !== null);
+    expect(ctx.pipeline.lastTurn).toMatchObject({ outcome: 'answered', transcript: 'what time is it' });
+    expect(ctx.services.calls.stt).toBe(1);
+    expect(containsChime(ctx.services.calls.sttAudio[0] ?? Buffer.alloc(0))).toBe(true);
+  });
+
+  it('ends quietly without retrying when stt.retryOnEmpty is off', async () => {
+    await setup();
+    await connected();
+    ctx.settings.apply({ 'stt.retryOnEmpty': false }, ctx.settings.version);
+    ctx.services.sttResult = async () => '';
+    await echo.runPipeline(syntheticSpeech());
+    await echo.waitForEvent('run_end');
+    expect(echo.eventTypes()).toEqual(QUIET_END);
+    expect(ctx.services.calls.stt).toBe(1);
+  });
+
+  it('does not trim the wake sound when stt.wakeSoundSkipMs is 0', async () => {
+    await setup();
+    await connected();
+    ctx.settings.apply({ 'stt.wakeSoundSkipMs': 0 }, ctx.settings.version);
+    ctx.services.sttResult = async (pcm) => (containsChime(pcm) ? '' : 'what time is it');
+    await echo.runPipeline(wakeRunWithChime());
+    await echo.waitForEvent('run_end');
+    expect(ctx.pipeline.lastTurn?.outcome).toBe('no-speech');
+    // The same clip is retried once, but without the trim there is nothing
+    // else to try: the old behaviour, kept behind a setting.
+    expect(ctx.services.calls.stt).toBe(2);
+    expect(ctx.services.calls.sttAudio.every((pcm) => containsChime(pcm))).toBe(true);
   });
 });
 

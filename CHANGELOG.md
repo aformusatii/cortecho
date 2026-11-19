@@ -8,6 +8,15 @@ All notable changes to Cortecho are documented here. The format follows
 
 ### Fixed
 
+- **The Echo no longer ignores a request because of its own wake chime.**
+  Every wake run uploads hassmic's 800 ms lead-in and the Echo's ~650 ms wake
+  chime before the user's words; `gpt-transcribe` can return an empty string for
+  such a clip, and the turn then ended quietly (`nothing usable recognised`).
+  An empty transcript is now retried once as-is, then once without the Echo's
+  wake chime (`stt.wakeSoundSkipMs`, default 650 ms, `0` = off,
+  `stt.retryOnEmpty` = on/off), and an empty *eager* transcript is no longer
+  reused as final. The first upload is unchanged. See
+  [the incident note](docs/incidents/2026-11-19-wake-chime-empty-transcript.md).
 - **Follow-ups no longer end on the Echo's wake sound.** hassmic plays its
   650 ms wake sound as a follow-up opens the mic; the VAD counted the echo as
   speech and closed the capture after 800 ms of silence (~1.3 s in) instead of
