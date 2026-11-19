@@ -44,6 +44,10 @@ test.describe('Echos', () => {
       await card.getByRole('link', { name: 'Open Study' }).click();
       await expect(page.getByRole('heading', { name: 'Study', level: 1 })).toBeVisible();
       await expect(page.getByText('e2e-fake-echo-2', { exact: true })).toBeVisible({ timeout: 15_000 });
+      // Forget conversation: present, but disabled until the Echo has a live session.
+      const forget = page.getByRole('button', { name: 'Forget conversation' });
+      await expect(forget).toBeVisible();
+      await expect(forget).toBeDisabled();
       if (testInfo.project.name === 'desktop') await saveScreenshot(page, testInfo, 'echo-overview');
 
       // Connection: rename (a name change does not restart the link).

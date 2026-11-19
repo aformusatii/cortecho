@@ -27,7 +27,9 @@ ESPHome assist satellite.
 
 ## Rules that keep the Echo from hanging
 
-The Echo has no turn timeout of its own in this mode:
+The Echo gives up on its own after more than **30 s in one state**
+(listening or thinking; hassmic's `PIPELINE_TIMEOUT`), so the app must finish
+each state well inside that, and it must always end the turn itself:
 
 - every turn ends with `RUN_END` (after the reply) or `ERROR` + `RUN_END`;
 - any failure before the reply is handed over → a short **spoken apology**;

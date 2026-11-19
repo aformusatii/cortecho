@@ -18,6 +18,8 @@ Run everything from the repository root.
 | `npm run lint` | Biome lint + format check (`npm run format` fixes) |
 | `npm test` | Vitest: shared + API (unit + FakeEcho integration, no network) |
 | `npm run test:e2e` | Playwright against a production build, 3 viewports, two FakeEchos, no real Echo, no OpenAI key |
+| `npm run test:smoke` | Production smoke tests against the deployed Cortecho (see below) |
+| `npm run smoke:init` | Generate the simulated Echo's identity (`smoke/.env.smoke`, once) |
 | `npm run doctor` | Read-only configuration/link check (same as `cortecho doctor`) |
 | `npm run db:generate` | New migration after editing `apps/api/src/db/schema.ts` |
 
@@ -72,6 +74,28 @@ docs/                     user and contributor documentation
 - **Manual with real OpenAI:** `npm run fake-echo -- question.wav`.
 
 No test needs the real Echo, an OpenAI key or the internet.
+
+## Production smoke tests
+
+`smoke/` is a separate test suite that drives the **deployed** Cortecho,
+unchanged, through the same interface a real Echo uses (spec
+`specs/production-smoke-tests.md`). It is not a workspace and is never part of
+`npm test` or CI — it needs keys, the production deployment and money.
+
+- `npm run smoke:init` — generate the simulated Echo's identity (a 32-byte
+  Noise key, a node name and a MAC) and write `smoke/.env.smoke` from the
+  tracked example. Add your own `SMOKE_OPENAI_API_KEY` by hand.
+- `npm run test:smoke` — run every scenario; `-- scenarios/confirm` runs one
+  file, `-t "<name>"` one test. `SMOKE_YES=1` lifts the cost guard
+  (`SMOKE_MAX_TURNS`, default 20 voice turns), `SMOKE_FORCE=1` lifts the run
+  lock. Announcements to all Echos (`@audible`) also play on the real Echo.
+- Each run writes `smoke/.runs/<run id>/report.md` plus per-step WAVs, wire
+  events, transcripts and logs. The suite reads `report.md` first.
+
+The simulated Echo is `apps/api/src/esphome/fake-echo.ts` (`timing: 'real'`);
+the smoke harness lives in `smoke/harness/`. Mail verification/cleanup
+(§6.4) is an interface with a `skip` implementation until `SMOKE_MAIL_*` is
+configured — it reports "skipped", never fails.
 
 ## Adding a tool
 

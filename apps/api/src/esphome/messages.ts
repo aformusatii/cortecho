@@ -17,6 +17,9 @@ export const MSG = {
   PING_RESPONSE: 8,
   DEVICE_INFO_REQUEST: 9,
   DEVICE_INFO_RESPONSE: 10,
+  LIST_ENTITIES_REQUEST: 11,
+  LIST_ENTITIES_DONE: 19,
+  SUBSCRIBE_STATES: 20,
   GET_TIME_REQUEST: 36,
   GET_TIME_RESPONSE: 37,
   SUBSCRIBE_VOICE_ASSISTANT_REQUEST: 89,
@@ -158,6 +161,10 @@ export type DeviceInfo = {
   friendlyName: string;
   voiceAssistantFeatureFlags: number;
   apiEncryptionSupported: boolean;
+  /** DeviceInfoResponse field 5 (hassmic's BUILD_TIME); not read by the client. */
+  buildTime?: string;
+  /** DeviceInfoResponse field 26 (api_encryption_provisionable = no key set). */
+  provisionable?: boolean;
 };
 
 export function decodeDeviceInfo(data: Buffer): DeviceInfo {
@@ -207,12 +214,12 @@ export function decodeSetKeyResponse(data: Buffer): { success: boolean } {
 // The other halves, for the fake Echo (tests and `npm run fake-echo`)
 // ---------------------------------------------------------------------------
 
-export function encodeHelloResponse(name: string): Buffer {
-  return new ProtoWriter().uint(1, 1).uint(2, 10).string(3, 'fake-echo').string(4, name).finish();
+export function encodeHelloResponse(name: string, serverInfo = 'hassmic test'): Buffer {
+  return new ProtoWriter().uint(1, 1).uint(2, 10).string(3, serverInfo).string(4, name).finish();
 }
 
 export function encodeDeviceInfo(info: Partial<DeviceInfo>): Buffer {
-  return new ProtoWriter()
+  const w = new ProtoWriter()
     .string(2, info.name ?? '')
     .string(3, info.macAddress ?? '')
     .string(4, info.esphomeVersion ?? '')
@@ -222,17 +229,26 @@ export function encodeDeviceInfo(info: Partial<DeviceInfo>): Buffer {
     .string(12, info.manufacturer ?? '')
     .string(13, info.friendlyName ?? '')
     .uint(17, info.voiceAssistantFeatureFlags ?? 0)
-    .bool(19, info.apiEncryptionSupported ?? false)
-    .finish();
+    .bool(19, info.apiEncryptionSupported ?? false);
+  if (info.buildTime) w.string(5, info.buildTime);
+  if (info.provisionable) w.bool(26, true);
+  return w.finish();
 }
 
 export function encodeVoiceAssistantRequest(req: Partial<VoiceAssistantRequest>): Buffer {
-  return new ProtoWriter()
+  const w = new ProtoWriter()
     .bool(1, req.start ?? false)
     .string(2, req.conversationId ?? '')
-    .uint(3, req.flags ?? 0)
-    .string(5, req.wakeWordPhrase ?? '')
-    .finish();
+    .uint(3, req.flags ?? 0);
+  // hassmic's start() sends the audio settings (volume_multiplier 1.0); the
+  // abort (start=false) is an empty message.
+  if (req.start) w.message(4, encodeVoiceAssistantAudioSettings(1.0));
+  return w.string(5, req.wakeWordPhrase ?? '').finish();
+}
+
+/** VoiceAssistantAudioSettings: volume_multiplier only (field 3), as hassmic's start(). */
+export function encodeVoiceAssistantAudioSettings(volumeMultiplier: number): Buffer {
+  return new ProtoWriter().float(3, volumeMultiplier).finish();
 }
 
 export function encodeVoiceAssistantAudio(audio: Partial<VoiceAssistantAudio>): Buffer {

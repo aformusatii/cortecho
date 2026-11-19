@@ -63,6 +63,15 @@ export function useAcceptDevice() {
   });
 }
 
+/** "Forget conversation": drop this Echo's memory (and any pending confirm). */
+export function useForgetConversation(id: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiRequest<void>(`/api/devices/${id}/conversation/reset`, { method: 'POST' }),
+    onSettled: () => invalidateDeviceViews(queryClient, id),
+  });
+}
+
 /**
  * Per-Echo overrides. The same version counter as the global form, so a
  * concurrent change can 409 here too.

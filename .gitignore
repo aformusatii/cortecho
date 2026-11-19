@@ -19,6 +19,12 @@ playwright-report/
 blob-report/
 playwright/.cache/
 
+# Production smoke tests (specs/production-smoke-tests.md). The real
+# .env.smoke holds a generated API key; runs and the TTS cache are transient.
+smoke/.env.smoke
+smoke/.runs/
+smoke/.cache/
+
 .DS_Store
 
 # Machine-specific compose additions (see docker-compose.override.example.yml)

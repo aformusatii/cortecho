@@ -1,6 +1,6 @@
 import type { DeviceStatus } from '@cortecho/shared';
 import { useQuery } from '@tanstack/react-query';
-import { RefreshCwIcon } from 'lucide-react';
+import { EraserIcon, RefreshCwIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
@@ -8,7 +8,7 @@ import { VoiceTestPhrase } from '@/features/settings/components/VoiceTestPhrase.
 import { StatusDot } from '@/features/status/components/StatusDot.tsx';
 import { TurnsList } from '@/features/status/components/TurnsList.tsx';
 import { CONNECTION_LABELS, formatTime, PIPELINE_LABELS, PROBLEM_LABELS } from '@/lib/displays.ts';
-import { useReconnectDevice } from '../api/devices.mutations.ts';
+import { useForgetConversation, useReconnectDevice } from '../api/devices.mutations.ts';
 import { deviceTurnsQueryOptions } from '../api/devices.queries.ts';
 
 const CONNECTION_TONE = {
@@ -24,6 +24,7 @@ const TURNS_SHOWN = 20;
 export function OverviewTab({ device }: { device: DeviceStatus }) {
   const turns = useQuery(deviceTurnsQueryOptions(device.id, TURNS_SHOWN));
   const reconnect = useReconnectDevice();
+  const forget = useForgetConversation(device.id);
 
   return (
     <div className="space-y-4">
@@ -68,6 +69,20 @@ export function OverviewTab({ device }: { device: DeviceStatus }) {
           }
         >
           <RefreshCwIcon aria-hidden="true" /> {reconnect.isPending ? 'Reconnecting…' : 'Reconnect'}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-4 ml-2"
+          disabled={forget.isPending || !device.hasSession}
+          onClick={() =>
+            forget.mutate(undefined, {
+              onSuccess: () => toast.success('Conversation forgotten.'),
+              onError: (error) => toast.error(error.message),
+            })
+          }
+        >
+          <EraserIcon aria-hidden="true" /> {forget.isPending ? 'Forgetting…' : 'Forget conversation'}
         </Button>
         <p className="mt-2 text-xs text-muted-foreground">
           Use this after changing the key on the Echo with <code>npm run echo-set-key</code>.

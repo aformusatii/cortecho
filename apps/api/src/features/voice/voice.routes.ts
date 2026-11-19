@@ -7,7 +7,7 @@ import {
 } from '@cortecho/shared';
 import { Hono } from 'hono';
 import { AppError } from '../../lib/errors.ts';
-import { errorMessage } from '../../lib/logger.ts';
+import { createLogger, errorMessage } from '../../lib/logger.ts';
 import { validate } from '../../lib/validation.ts';
 import { askWeb } from '../../pipeline/ask.ts';
 import { NotConfiguredError } from '../../pipeline/services.ts';
@@ -83,6 +83,7 @@ async function sayOn(
 const REPLY_FILE = /^([A-Za-z0-9_-]{22})\.wav$/;
 
 export function createVoiceRoutes(runtime: VoiceRuntime) {
+  const sessionLog = createLogger('session');
   return (
     new Hono()
       // The Echo downloads the spoken reply / announcement here (hassmic plays
@@ -150,6 +151,14 @@ export function createVoiceRoutes(runtime: VoiceRuntime) {
         } catch (error) {
           throw toAppError(error);
         }
+      })
+
+      // "Forget conversation" for the web session (/api/ask without a device),
+      // the symmetry of POST /api/devices/:id/conversation/reset.
+      .post('/conversation/reset', (c) => {
+        runtime.sessions.reset('web');
+        sessionLog.info('web conversation forgotten');
+        return c.body(null, 204);
       })
   );
 }

@@ -117,6 +117,28 @@ describe('devices API', () => {
     expect(accept.status).toBe(409);
   });
 
+  it('forgets a device conversation (idempotent) and answers 404 for an unknown device', async () => {
+    const app = setup();
+    expect((await app.request('/api/devices/999/conversation/reset', { method: 'POST' })).status).toBe(404);
+    const device = await json<DeviceStatus>(await app.request('/api/devices', post(input)));
+    // A live session: the route drops it (and any pending confirm with it).
+    ctx.sessions.get(`device:${device.id}`, 60_000).pendingAction = {
+      exposedName: 'send_email',
+      argsHash: 'x',
+      argumentsJson: '{}',
+      createdTurn: 1,
+      expiresAt: Date.now() + 60_000,
+    };
+    const reset = await app.request(`/api/devices/${device.id}/conversation/reset`, { method: 'POST' });
+    expect(reset.status).toBe(204);
+    expect(await reset.text()).toBe('');
+    expect(ctx.sessions.has(`device:${device.id}`)).toBe(false);
+    // Idempotent: a second reset still answers 204.
+    expect(
+      (await app.request(`/api/devices/${device.id}/conversation/reset`, { method: 'POST' })).status,
+    ).toBe(204);
+  });
+
   it('resolves per-Echo overrides, allows only perEcho keys and inherits with null', async () => {
     const app = setup();
     const device = await json<DeviceStatus>(await app.request('/api/devices', post(input)));

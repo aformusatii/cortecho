@@ -16,6 +16,7 @@ Base URL: `http://<docker-host>:3000`. The SPA is served at `/`, `/echos`,
 | Method | Path | Body |
 |---|---|---|
 | `POST` | `/api/ask` | `{text, deviceId?}` — runs the agent on text. With `deviceId`, that Echo's memory, prompt and settings; without, the `web` session and global settings |
+| `POST` | `/api/conversation/reset` | Drops the `web` session's memory (the counterpart of the per-Echo reset above). 204 |
 | `POST` | `/api/say` | `{text, deviceId? \| all?, voice?}` — announces text. Neither field = every enabled Echo; `deviceId` = that one; `all` excludes disabled and test devices. Returns `{results: [{deviceId, deviceName, ok, turn?, error?}]}` |
 
 `deviceId` is a number (the Echo's id). An unknown id is 404. `/api/say` with
@@ -42,6 +43,7 @@ curl -s http://192.168.1.10:3000/api/ask \
 | `PATCH` | `/api/devices/:id` | Any field; `apiKey: null` clears it, absent keeps it. Restarts the link only when host/port/key/enabled changed |
 | `DELETE` | `/api/devices/:id` | Stops the link; turns keep their history with `deviceId` null |
 | `POST` | `/api/devices/:id/reconnect` | Drops and reopens the link |
+| `POST` | `/api/devices/:id/conversation/reset` | Drops that Echo's conversation memory (and any pending confirm). 204; idempotent; 404 for an unknown device |
 | `POST` | `/api/devices/:id/accept-device` | Stores the node name the Echo now reports after `unexpected-device` |
 | `GET` | `/api/devices/:id/settings` | `{version, overrides, effective}` |
 | `PATCH` | `/api/devices/:id/settings` | `{version, changes}`; only per-Echo keys; `null` = inherit |

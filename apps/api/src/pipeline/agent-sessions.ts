@@ -56,6 +56,11 @@ export class AgentSessions {
     else this.sessions.delete(key);
   }
 
+  /** Whether a conversation exists for `key` (read-only; no expiry side effect). */
+  has(key: string): boolean {
+    return this.sessions.has(key);
+  }
+
   get size(): number {
     return this.sessions.size;
   }

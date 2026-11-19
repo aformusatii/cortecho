@@ -129,6 +129,15 @@ describe('voice routes', () => {
     expect((await app.request(`/api/reply-audio/${reply.id}.wav`)).status).toBe(404);
   });
 
+  it('POST /api/conversation/reset drops the web session', async () => {
+    const app = setup();
+    await app.request('/api/ask', post({ text: 'hello' }));
+    expect(ctx.sessions.has('web')).toBe(true);
+    const reset = await app.request('/api/conversation/reset', { method: 'POST' });
+    expect(reset.status).toBe(204);
+    expect(ctx.sessions.has('web')).toBe(false);
+  });
+
   it('GET /api/turns validates the limit', async () => {
     const app = setup();
     expect((await app.request('/api/turns?limit=1000')).status).toBe(400);

@@ -28,6 +28,8 @@ Run everything from the repository root.
 | `npm run lint` | Biome lint + format check (`npm run format` fixes) |
 | `npm test` | Vitest: shared + API (unit + FakeEcho integration, no network) |
 | `npm run test:e2e` | Playwright against a production build, 3 viewports (two FakeEchos, no real Echo, no OpenAI key) |
+| `npm run test:smoke` | Production smoke tests (spec `specs/production-smoke-tests.md`): the simulated Echo against the deployed Cortecho. Never in CI; needs `smoke/.env.smoke`, the deployment and money |
+| `npm run smoke:init` | Generates the simulated Echo's identity and writes `smoke/.env.smoke` (once) |
 | `npm run doctor` | Read-only configuration/link diagnostics |
 | `npm run db:generate` | New migration after editing `apps/api/src/db/schema.ts` |
 
@@ -152,7 +154,9 @@ docs/                     user and contributor documentation
   per pipeline.
 - Every turn ends with `RUN_END` (after the reply was handed over) or
   `ERROR` + `RUN_END`. `stt-no-text-recognized` ends quietly, any other code
-  plays the error sound. hassmic has no turn timeout of its own in this mode.
+  plays the error sound. hassmic gives up after more than 30 s in one state
+  (listening or thinking, `PIPELINE_TIMEOUT`): the turn deadline (24 s from the
+  end of speech) and the follow-up listen cap (27 s) must stay under it.
 - **We end listening** (our VAD), as Home Assistant's VAD does: hassmic's
   own end detection (`end_of_request`) is experimental and off by default,
   so the Echo usually streams until we send `STT_VAD_END`.

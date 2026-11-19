@@ -82,6 +82,8 @@ export type DeviceStatus = {
   lastTimeSyncAt: string | null;
   info: EchoInfo | null;
   pipeline: { state: PipelineState };
+  /** True when the Echo has a live conversation (memory, possibly a pending confirm). */
+  hasSession: boolean;
   /** How many setting keys this Echo overrides. */
   overrideCount: number;
 };

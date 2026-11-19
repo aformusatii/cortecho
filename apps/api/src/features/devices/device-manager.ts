@@ -216,6 +216,7 @@ export class DeviceManager {
       lastTimeSyncAt: client?.lastTimeSyncAt?.toISOString() ?? null,
       info: client?.echoInfo ?? null,
       pipeline: { state: runtime?.pipeline.state ?? 'idle' },
+      hasSession: device.enabled ? this.options.sessions.has(`device:${device.id}`) : false,
       overrideCount: Object.keys(device.overrides).length,
     };
   }
