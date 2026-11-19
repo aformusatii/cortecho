@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 // The production smoke suite (spec §3.1): one worker, no isolation, long
@@ -6,7 +7,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     name: 'smoke',
-    root: '.',
+    // The smoke folder itself, whatever the working directory (npm runs from the repo root).
+    root: fileURLToPath(new URL('.', import.meta.url)),
     include: ['scenarios/**/*.smoke.ts'],
     globalSetup: ['./globalSetup.ts'],
     setupFiles: ['./harness/matchers.ts'],

@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
  * `SMOKE_OPENAI_API_KEY` by hand afterwards.
  */
 
-const SMOKE_DIR = fileURLToPath(new URL('..', import.meta.url));
+const SMOKE_DIR = fileURLToPath(new URL('.', import.meta.url));
 const ENV_PATH = path.join(SMOKE_DIR, '.env.smoke');
 const EXAMPLE_PATH = path.join(SMOKE_DIR, '.env.smoke.example');
 
@@ -27,7 +27,9 @@ if (existsSync(ENV_PATH) && !force) {
 const apiKey = randomBytes(32).toString('base64');
 const macSuffix = randomBytes(3).toString('hex'); // 6 hex chars
 const nodeName = `echo-dot-2-${macSuffix}`;
-const mac = `02:${macSuffix.match(/.{2}/g)?.join(':') ?? ''}`;
+// Six octets, locally administered (02:...); the last three are the node
+// name's suffix, as on a real Dot (echo-dot-2-505cd5 <-> ..:50:5c:d5).
+const mac = ['02', randomBytes(2).toString('hex'), macSuffix].join('').replace(/(..)(?!$)/g, '$1:');
 
 let content = readFileSync(EXAMPLE_PATH, 'utf8');
 content = content
