@@ -59,7 +59,7 @@ export class OwnerVoice {
 
   /** The reply's text, transcribed with the suite's key (spec §5.3). */
   async transcribe(replyWav: Buffer): Promise<string> {
-    const file = await toFile(replyWav, 'reply.wav', { type: 'audio/wav' });
+    const file = await toFile(withRealWavLengths(replyWav), 'reply.wav', { type: 'audio/wav' });
     const result = await this.client.audio.transcriptions.create({
       model: this.env.SMOKE_TRANSCRIBE_MODEL,
       file,
@@ -148,4 +148,26 @@ function downmixToMono(pcm: Buffer, channels: number): Buffer {
   const out = Buffer.alloc(samples * 2);
   for (let i = 0; i < samples; i++) out.writeInt16LE(pcm.readInt16LE(i * 2 * channels), i * 2);
   return out;
+}
+
+/**
+ * Cortecho streams replies with a placeholder length in the WAV header
+ * (0xffffffff, the length is not known when the first byte goes out). The Echo
+ * plays that, but OpenAI's transcription rejects it, so the RIFF and data sizes
+ * are rewritten from the bytes actually received.
+ */
+export function withRealWavLengths(wav: Buffer): Buffer {
+  if (wav.length < 12 || wav.toString('latin1', 0, 4) !== 'RIFF') return wav;
+  const fixed = Buffer.from(wav);
+  fixed.writeUInt32LE(fixed.length - 8, 4);
+  let offset = 12;
+  while (offset + 8 <= fixed.length) {
+    const id = fixed.toString('latin1', offset, offset + 4);
+    if (id === 'data') {
+      fixed.writeUInt32LE(fixed.length - offset - 8, offset + 4);
+      break;
+    }
+    offset += 8 + fixed.readUInt32LE(offset + 4);
+  }
+  return fixed;
 }

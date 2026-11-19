@@ -9,11 +9,11 @@ describe('announcements', () => {
   beforeEach(() => echo.newConversation());
 
   test('announces on this Echo', async () => {
-    await echo.announce(`smoke test ${echo.runId} on the test Echo`);
+    await echo.announce(`smoke test ${echo.tag} on the test Echo`);
   });
 
   // @audible: this one also plays on the real Echo in the house (spec O5).
   test('announces on every Echo', async () => {
-    await echo.announce(`smoke test ${echo.runId} on all Echos`, { all: true });
+    await echo.announce(`smoke test ${echo.tag} on all Echos`, { all: true });
   });
 });

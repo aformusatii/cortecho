@@ -73,6 +73,16 @@ export type FakeEchoOptions = {
   /** Mic audio of a follow-up run (default: 3 s of silence). */
   followUpAudio?: Buffer;
   /**
+   * The Echo's wake sound as the mic hears it, in dBFS (unset: none). hassmic
+   * plays it as every run starts streaming (sound_request, then
+   * pipeline_start), so the live audio after the lead-in opens with ~650 ms
+   * of it; real Echo recordings (2026-11-18) show it at
+   * about -30..-50 dBFS. Cortecho's follow-up guard is built around it.
+   */
+  wakeSoundDbfs?: number;
+  /** Room noise level in dBFS for the audio after the request (unset: digital silence). Real Echo: ~-60. */
+  roomNoiseDbfs?: number;
+  /**
    * hassmic's experimental "end_of_request" setting (off by default, as on
    * the real Echo): on = the Echo sends end-of-audio after the request;
    * off = it keeps streaming the room until the app ends listening.
@@ -119,6 +129,13 @@ const MIC_RATE = 16_000;
 const MIC_CHUNK_BYTES = 4096; // hassmic's audio(): 4096-byte pieces
 const LEAD_IN_MS = 800; // hassmic's LEAD_IN_MS
 const WAKE_SOUND_MS = 650; // stock ui_wakesound, before a follow-up run
+/**
+ * Room audio streamed after the request (end_of_request off). Longer than
+ * PIPELINE_TIMEOUT: the real Echo never ends a run by running out of audio,
+ * only the app's VAD or its own 30 s give up do. (20 s here once ended a long
+ * follow-up answer with end-of-audio before Cortecho's 27 s cap was reached.)
+ */
+const ROOM_MS = 35_000;
 const PIPELINE_TIMEOUT_MS = 30_000; // hassmic's PIPELINE_TIMEOUT, per state
 const TIME_ASK_MS = 6 * 3600 * 1000; // hassmic's TIME_ASK_MS
 const TIMEOUT_TICK_MS = 25;
@@ -149,7 +166,16 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
   private readonly connections = new Set<Connection>();
   private va: Connection | null = null;
   private readonly options: Required<
-    Omit<FakeEchoOptions, 'apiKey' | 'timing' | 'playedDelayMs' | 'realtime' | 'pipelineTimeoutMs'>
+    Omit<
+      FakeEchoOptions,
+      | 'apiKey'
+      | 'timing'
+      | 'playedDelayMs'
+      | 'realtime'
+      | 'pipelineTimeoutMs'
+      | 'wakeSoundDbfs'
+      | 'roomNoiseDbfs'
+    >
   > & { apiKey: Buffer | null };
   /** hassmic's `cancelled` 0/1/2: 1 after a cancel, 2 after the next start. */
   private cancelled: 0 | 1 | 2 = 0;
@@ -198,7 +224,21 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
   endOfRequest: boolean;
   private readonly realtime: boolean;
   private readonly playedDelayMs: number | null;
+  /** The current run's number: a run's mic loop stops once a newer run starts (one mic, one stream). */
+  private runGeneration = 0;
+  /** Audio spoken into the open run (an answer): it replaces the room audio, chunk by chunk. */
+  private injected: Buffer[] = [];
+  /** Ends the reply's playback early (barge-in); null when nothing plays. */
+  private cutPlayback: (() => void) | null = null;
+  /** The request of a barge-in, started once the cut reply has stopped. */
+  private pendingBarge: Buffer | null = null;
+  /** The reply is being stopped without a new run (the button while SPEAKING). */
+  private stopRequested = false;
+  /** Between a reply's end and the run that follows it (follow-up, barge-in). */
+  private nextRunStarting = false;
   private readonly wakeSoundGapMs: number;
+  private readonly wakeSoundDbfs: number | null;
+  private readonly roomNoiseDbfs: number | null;
 
   constructor(options: FakeEchoOptions = {}) {
     super();
@@ -206,7 +246,10 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
     this.timing = timing;
     this.realtime = timing === 'real' ? true : (options.realtime ?? false);
     this.playedDelayMs = timing === 'real' ? null : (options.playedDelayMs ?? 20);
-    this.wakeSoundGapMs = timing === 'real' ? WAKE_SOUND_MS : 0;
+    this.wakeSoundDbfs = options.wakeSoundDbfs ?? null;
+    this.roomNoiseDbfs = options.roomNoiseDbfs ?? null;
+    // With the sound in the mic stream it plays during the run, as on the Echo; without it, a gap stands in for it.
+    this.wakeSoundGapMs = timing === 'real' && this.wakeSoundDbfs === null ? WAKE_SOUND_MS : 0;
     this.pipelineTimeoutMs = options.pipelineTimeoutMs ?? PIPELINE_TIMEOUT_MS;
     this.options = {
       port: 0,
@@ -317,6 +360,8 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
     const va = this.va;
     if (!va) throw new Error('no voice assistant subscriber');
     this.runs += 1;
+    const generation = ++this.runGeneration;
+    this.injected = [];
     // hassmic's start(): a cancelled run becomes "dropped until RUN_START".
     if (this.cancelled) this.cancelled = 2;
     this.continueConversation = false;
@@ -337,19 +382,28 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
     if (this.timing === 'real') this.sendLeadIn(va);
     // Without end_of_request the mic keeps streaming the (quiet) room after
     // the request until the app ends listening; 20 s at most here.
-    const room = Buffer.alloc(MIC_RATE * 2 * 20);
-    const stream = this.endOfRequest ? pcm : Buffer.concat([pcm, room]);
-    for (let offset = 0; offset < stream.length && this.micOpen; offset += MIC_CHUNK_BYTES) {
+    const room = roomAudio(MIC_RATE * 2 * (ROOM_MS / 1000), this.roomNoiseDbfs);
+    // Every run's live audio opens with the Echo's own wake sound: hassmic
+    // plays it as the run starts (sound_request, then pipeline_start), for a
+    // wake word, a barge-in and a follow-up alike (incident 2026-11-19, turns
+    // 184/185: the chime in every upload). Words spoken into the run
+    // (feedAudio) can only follow it.
+    const sound = this.wakeSoundDbfs !== null ? wakeSound(this.wakeSoundDbfs, this.roomNoiseDbfs) : null;
+    const parts = sound ? [sound, pcm] : [pcm];
+    const stream = this.endOfRequest ? Buffer.concat(parts) : Buffer.concat([...parts, room]);
+    const injectFrom = sound?.length ?? 0;
+    const current = () => this.micOpen && generation === this.runGeneration;
+    for (let offset = 0; offset < stream.length && current(); offset += MIC_CHUNK_BYTES) {
       if (va.socket.destroyed) return;
-      this.sendTo(
-        va,
-        MSG.VOICE_ASSISTANT_AUDIO,
-        encodeVoiceAssistantAudio({ data: stream.subarray(offset, offset + MIC_CHUNK_BYTES) }),
-      );
+      // One mic: words spoken into the run (feedAudio) take the place of the room.
+      const data =
+        (offset >= injectFrom ? this.injected.shift() : undefined) ??
+        stream.subarray(offset, offset + MIC_CHUNK_BYTES);
+      this.sendTo(va, MSG.VOICE_ASSISTANT_AUDIO, encodeVoiceAssistantAudio({ data }));
       const chunkMs = (MIC_CHUNK_BYTES / 2 / MIC_RATE) * 1000;
       await sleep(this.realtime ? chunkMs : 1);
     }
-    if (this.micOpen && !va.socket.destroyed) {
+    if (current() && !va.socket.destroyed) {
       // The Echo heard the end of the request itself (micend): end-of-audio.
       this.micOpen = false;
       this.sendTo(va, MSG.VOICE_ASSISTANT_AUDIO, encodeVoiceAssistantAudio({ end: true }));
@@ -369,18 +423,43 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
    * `answer`); the wake word path is `runPipeline`.
    */
   async feedAudio(pcm: Buffer): Promise<void> {
-    const va = this.va;
-    if (!va || !this.micOpen) return;
-    for (let offset = 0; offset < pcm.length && this.micOpen; offset += MIC_CHUNK_BYTES) {
-      if (va.socket.destroyed) return;
-      this.sendTo(
-        va,
-        MSG.VOICE_ASSISTANT_AUDIO,
-        encodeVoiceAssistantAudio({ data: pcm.subarray(offset, offset + MIC_CHUNK_BYTES) }),
-      );
-      const chunkMs = (MIC_CHUNK_BYTES / 2 / MIC_RATE) * 1000;
-      await sleep(this.realtime ? chunkMs : 1);
+    if (!this.va || !this.micOpen) return;
+    // The run's own mic loop sends these in place of the room audio, at the
+    // mic's pace; this waits until they are all out (or the mic closed).
+    const generation = this.runGeneration;
+    for (let offset = 0; offset < pcm.length; offset += MIC_CHUNK_BYTES) {
+      this.injected.push(pcm.subarray(offset, offset + MIC_CHUNK_BYTES));
     }
+    while (this.injected.length > 0 && this.micOpen && generation === this.runGeneration) await sleep(5);
+  }
+
+  /**
+   * The wake word during a reply (main.c, local wake while SPEAKING): the
+   * reply is cut, and once playback has stopped the wake sound plays and a new
+   * run starts with `pcm` as its request. Only while a reply plays.
+   */
+  bargeIn(pcm: Buffer): boolean {
+    if (this.state !== 'speaking' || this.pendingBarge) return false;
+    this.log('barge-in');
+    this.pendingBarge = pcm;
+    // Still downloading: playback is skipped when it would start (playDuration).
+    this.cutPlayback?.();
+    return true;
+  }
+
+  /** The action button while a reply plays: the reply stops, nothing follows. */
+  stopPlayback(): boolean {
+    if (this.state !== 'speaking') return false;
+    this.log('stop: reply cut');
+    this.stopRequested = true;
+    this.continueConversation = false;
+    this.cutPlayback?.();
+    return true;
+  }
+
+  /** Playing, or about to start the run that follows a reply: not idle for good yet. */
+  get busy(): boolean {
+    return this.mediaBusy || this.nextRunStarting;
   }
 
   // -------------------------------------------------------------------------
@@ -760,10 +839,24 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
     this.setState('idle');
     this.played.push(media);
     this.emit('played', media);
+    const barge = this.pendingBarge;
+    this.pendingBarge = null;
+    this.stopRequested = false;
+    if (barge && this.va) {
+      // core_pipeline_finish after a local barge-in: wake sound, then a wake word run.
+      this.continueConversation = false;
+      this.nextRunStarting = true;
+      await sleep(WAKE_SOUND_MS);
+      this.nextRunStarting = false;
+      void this.runPipeline(barge);
+      return;
+    }
     if (this.continueConversation && this.va) {
       // core_pipeline_finish with barge_in: wake sound, then a new run without the wake word.
       this.continueConversation = false;
+      this.nextRunStarting = true;
       if (this.wakeSoundGapMs > 0) await sleep(this.wakeSoundGapMs);
+      this.nextRunStarting = false;
       void this.runPipeline(this.followUpAudio);
     }
   }
@@ -816,7 +909,15 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
       (media.format === 'wav' && media.sampleRate > 0
         ? Math.round((media.bytes / media.sampleRate / 2) * 1000)
         : 0);
-    await sleep(ms);
+    if (this.pendingBarge || this.stopRequested) return; // cut before it started
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      this.cutPlayback = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+    this.cutPlayback = null;
   }
 
   private async fetchMedia(url: string, kind: PlayedMedia['kind']): Promise<PlayedMedia> {
@@ -894,4 +995,29 @@ export function syntheticSpeech({
     pcm.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(value * 32767))), i * 2);
   }
   return pcm;
+}
+
+/** `bytes` of room: noise at `dbfs`, or digital silence when unset. */
+function roomAudio(bytes: number, dbfs: number | null): Buffer {
+  const out = Buffer.alloc(bytes);
+  if (dbfs === null) return out;
+  // Uniform noise: RMS = peak / sqrt(3).
+  const peak = 32768 * 10 ** (dbfs / 20) * Math.sqrt(3);
+  for (let i = 0; i + 1 < bytes; i += 2) out.writeInt16LE(Math.round((Math.random() * 2 - 1) * peak), i);
+  return out;
+}
+
+/** The wake sound as the mic hears it: a decaying two-tone chime over the room, WAKE_SOUND_MS long. */
+function wakeSound(dbfs: number, roomDbfs: number | null): Buffer {
+  const samples = Math.round((MIC_RATE * WAKE_SOUND_MS) / 1000);
+  const out = roomAudio(samples * 2, roomDbfs);
+  const amplitude = 32768 * 10 ** (dbfs / 20) * Math.SQRT2;
+  for (let i = 0; i < samples; i++) {
+    const t = i / MIC_RATE;
+    const frequency = t < 0.2 ? 880 : 1320;
+    const envelope = Math.exp(-3 * (i / samples));
+    const value = out.readInt16LE(i * 2) + amplitude * envelope * Math.sin(2 * Math.PI * frequency * t);
+    out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(value))), i * 2);
+  }
+  return out;
 }

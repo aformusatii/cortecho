@@ -12,7 +12,7 @@ describe('a plain question', () => {
     const turn = await echo.wake('What time is it?');
     expect(turn.turn?.outcome).toBe('answered');
     expect(turn.said).toBeTruthy();
-    expect(turn.said).toHaveSaidOnce(/\w/);
+    expect(turn.said).toHaveSaidOnce(/\b\d{1,2}[:.]\d{2}\b/); // the time, said once (not twice)
     expect(turn.listensAgain).toBe(false);
     expect(turn.wire).toEndWith(['tts_end', 'run_end']);
     expect(turn.errorSound).toBe(false);

@@ -74,7 +74,10 @@ export class CortechoApi {
     id: number,
     patch: { version: number; changes: Record<string, unknown> },
   ): Promise<DeviceSettingsDocument> {
-    return this.request<DeviceSettingsDocument>(`/api/devices/${id}/settings`, this.json(patch));
+    return this.request<DeviceSettingsDocument>(`/api/devices/${id}/settings`, {
+      ...this.json(patch),
+      method: 'PATCH',
+    });
   }
 
   /** Forget one Echo's conversation (idempotent). */

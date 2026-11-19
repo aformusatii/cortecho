@@ -1,4 +1,15 @@
-import { expect } from 'vitest';
+import { beforeEach, expect, onTestFinished } from 'vitest';
+import { currentSmokeEcho } from './smoke-echo.ts';
+
+// Spec §8: pass/fail per scenario in report.md, under the steps it ran.
+beforeEach(({ task }) => {
+  currentSmokeEcho()?.report.heading(task.fullName);
+  onTestFinished(({ task: finished }) => {
+    const state = finished.result?.state;
+    const error = finished.result?.errors?.[0]?.message?.split('\n')[0] ?? '';
+    currentSmokeEcho()?.report.scenario(finished.name, state !== 'fail', state === 'fail' ? error : '');
+  });
+});
 
 /**
  * Custom matchers for the smoke scenarios (spec §7.2): `toEndWith`,
@@ -16,20 +27,23 @@ function saidOf(received: unknown): string | null {
 }
 
 expect.extend({
-  /** The transcribed reply said `pattern` exactly once (the "said it twice" bug). */
+  /**
+   * Exactly one sentence of the transcribed reply matches `pattern` (the "said
+   * it twice" bug). Sentences, not matches: "Say yes if you want me to" is one
+   * question even when the pattern lists both phrasings.
+   */
   toHaveSaidOnce(received: unknown, pattern: RegExp) {
     const said = saidOf(received);
     if (said === null) {
       return { pass: false, message: () => 'expected the reply to have been said, but nothing was played' };
     }
-    const global = new RegExp(
-      pattern.source,
-      pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`,
-    );
-    const count = said.match(global)?.length ?? 0;
+    const single = new RegExp(pattern.source, pattern.flags.replace('g', ''));
+    // Split after . ! ? followed by a space; times like "23:04" and decimals stay whole.
+    const sentences = said.split(/(?<=[.!?])\s+/).filter((sentence) => sentence.trim() !== '');
+    const count = sentences.filter((sentence) => single.test(sentence)).length;
     return {
       pass: count === 1,
-      message: () => `expected "${said}" to match ${pattern} once, found ${count} time(s)`,
+      message: () => `expected one sentence of "${said}" to match ${pattern}, found ${count}`,
     };
   },
 

@@ -51,7 +51,7 @@ const EnvSchema = z.object({
 
   // Mic levels
   SMOKE_SPEECH_DBFS: z.coerce.number().default(-26),
-  SMOKE_ROOM_DBFS: z.coerce.number().default(-55),
+  SMOKE_ROOM_DBFS: z.coerce.number().default(-60),
 
   // Guards
   SMOKE_MAX_TURNS: z.coerce.number().int().min(1).default(20),

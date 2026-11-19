@@ -219,3 +219,79 @@ describe('stop word (F11)', () => {
     ctx.sqlite.close();
   });
 });
+
+describe('one mic (smoke-suite primitives)', () => {
+  it('cuts a playing reply on barge-in, then starts a new run (main.c local wake while SPEAKING)', async () => {
+    const echo = new FakeEcho({ fetchAudio: async () => WAV(), playedDelayMs: 10_000 });
+    const port = await echo.start();
+    const client = await rawPlaintextClient(port);
+    client.send(MSG.SUBSCRIBE_VOICE_ASSISTANT_REQUEST, encodeSubscribeVoiceAssistant(true));
+    await waitUntil(() => echo.isSubscribed);
+    client.send(
+      MSG.VOICE_ASSISTANT_EVENT_RESPONSE,
+      encodeVoiceAssistantEvent(VA_EVENT.TTS_END, { url: 'http://x/reply.wav' }),
+    );
+    await waitUntil(() => echo.state === 'speaking');
+    const cutAt = Date.now();
+    expect(echo.bargeIn(Buffer.alloc(4096))).toBe(true);
+    await waitUntil(() =>
+      client.messages.some(
+        (m) => m.type === MSG.VOICE_ASSISTANT_REQUEST && decodeVoiceAssistantRequest(m.payload).start,
+      ),
+    );
+    expect(Date.now() - cutAt).toBeLessThan(5_000); // the 10 s reply was cut, not played out
+    expect(echo.echoLog).toContain('barge-in');
+    expect(echo.runs).toBe(1);
+    expect(echo.bargeIn(Buffer.alloc(4096))).toBe(false); // nothing plays now
+    await echo.stop();
+  });
+
+  it('sends spoken words in place of the room audio, not next to it', async () => {
+    const echo = new FakeEcho();
+    const port = await echo.start();
+    const client = await rawPlaintextClient(port);
+    client.send(MSG.SUBSCRIBE_VOICE_ASSISTANT_REQUEST, encodeSubscribeVoiceAssistant(true));
+    await waitUntil(() => echo.isSubscribed);
+    const request = Buffer.alloc(16_000 * 2); // 1 s; the run streams 35 s of room after it
+    const run = echo.runPipeline(request);
+    await waitUntil(() => client.messages.some((m) => m.type === MSG.VOICE_ASSISTANT_AUDIO));
+    await echo.feedAudio(Buffer.alloc(4096 * 3, 0x7f));
+    await run;
+    const chunks = client.messages
+      .filter((m) => m.type === MSG.VOICE_ASSISTANT_AUDIO)
+      .map((m) => decodeVoiceAssistantAudio(m.payload))
+      .filter((audio) => !audio.end);
+    expect(chunks.filter((audio) => audio.data[0] === 0x7f)).toHaveLength(3);
+    // One stream: the same number of chunks as without the words (1 s + 35 s room).
+    expect(chunks).toHaveLength(Math.ceil((16_000 * 2 * 36) / 4096));
+    await echo.stop();
+  });
+
+  it('opens a run with the wake sound, and words come only after it', async () => {
+    const echo = new FakeEcho({ wakeSoundDbfs: -38, roomNoiseDbfs: -60, followUpAudio: Buffer.alloc(0) });
+    const port = await echo.start();
+    const client = await rawPlaintextClient(port);
+    client.send(MSG.SUBSCRIBE_VOICE_ASSISTANT_REQUEST, encodeSubscribeVoiceAssistant(true));
+    await waitUntil(() => echo.isSubscribed);
+    const run = echo.runPipeline(Buffer.alloc(0));
+    await echo.feedAudio(Buffer.alloc(4096, 0x7f));
+    await run;
+    const chunks = client.messages
+      .filter((m) => m.type === MSG.VOICE_ASSISTANT_AUDIO)
+      .map((m) => decodeVoiceAssistantAudio(m.payload))
+      .filter((audio) => !audio.end);
+    const soundChunks = Math.ceil((16_000 * 2 * 0.65) / 4096);
+    const firstWords = chunks.findIndex((audio) => audio.data[0] === 0x7f && audio.data[1] === 0x7f);
+    expect(firstWords).toBeGreaterThanOrEqual(soundChunks - 1);
+    // The sound is louder than the room: the start of the stream is not silence.
+    const peak = (data: Buffer) => {
+      let max = 0;
+      for (let i = 0; i + 1 < data.length; i += 2) max = Math.max(max, Math.abs(data.readInt16LE(i)));
+      return max;
+    };
+    expect(peak(chunks[0]?.data ?? Buffer.alloc(0))).toBeGreaterThan(
+      peak(chunks.at(-1)?.data ?? Buffer.alloc(0)) * 5,
+    );
+    await echo.stop();
+  });
+});
