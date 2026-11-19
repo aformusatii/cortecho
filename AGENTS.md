@@ -28,13 +28,54 @@ Run everything from the repository root.
 | `npm run lint` | Biome lint + format check (`npm run format` fixes) |
 | `npm test` | Vitest: shared + API (unit + FakeEcho integration, no network) |
 | `npm run test:e2e` | Playwright against a production build, 3 viewports (two FakeEchos, no real Echo, no OpenAI key) |
-| `npm run test:smoke` | Production smoke tests (spec `specs/production-smoke-tests.md`): the simulated Echo against the deployed Cortecho. Never in CI; needs `smoke/.env.smoke`, the deployment and money |
+| `npm run test:smoke` | **Production smoke tests**: a simulated Echo ("Test Echo") against the *deployed* Cortecho, real OpenAI. Never in CI; needs `smoke/.env.smoke`, the deployment and money. **Ask the owner first** (see Smoke tests below) |
 | `npm run smoke:init` | Generates the simulated Echo's identity and writes `smoke/.env.smoke` (once) |
 | `npm run doctor` | Read-only configuration/link diagnostics |
 | `npm run db:generate` | New migration after editing `apps/api/src/db/schema.ts` |
 
 **Before you call any change done:** `npm run typecheck && npm run lint && npm test`
 must pass. Run `npm run test:e2e` when the UI or HTTP behaviour changes.
+After a deploy that changes voice behaviour, offer the owner a smoke run.
+
+### Smoke tests (`smoke/`)
+
+The suite drives the deployed Cortecho through the same ESPHome interface a
+real Echo uses: the test's text becomes speech (the suite's own OpenAI key),
+streams in as mic audio, and the reply is downloaded and transcribed back.
+Cortecho knows the simulator only as one more `kind: echo` device named
+"Test Echo"; its per-Echo prompt and overrides are mirrored from the real Echo.
+Guide: [docs/development.md](docs/development.md#production-smoke-tests).
+
+- **Ask before running it.** It changes production state (enables the Test
+  Echo device, writes its per-Echo settings), costs OpenAI money per turn
+  (`SMOKE_MAX_TURNS` guards a run, default 20), and has real side effects (the
+  confirm scenario saves a mail draft). The `@audible` all-Echos announcement
+  plays on the real Echo in the house; `-- -t '^(?!.*every Echo)'` skips it.
+- **No test modes in Cortecho.** Never add a flag, header or device property
+  that makes the app treat the Test Echo differently. The difference is the
+  device name only.
+- One run at a time; the harness sets the Test Echo up once per run and
+  disables it at the end (also on Ctrl-C, via `globalSetup`). It never touches
+  the real Echo's row, its per-Echo settings or global settings.
+- Read `smoke/.runs/<run id>/report.md` first (dialogue as heard, outcome,
+  wire, timings, pass/fail); open a step's `server.log`, `echo.log`, WAVs or
+  `turn.json` only for a failure.
+- **When the suite and the real Echo disagree, the suite is wrong.** The
+  simulator is `FakeEcho` in `timing: 'real'` with the smoke mic options
+  (`wakeSoundDbfs`, `roomNoiseDbfs`); unit tests use it in `'fast'` timing, so
+  a fidelity fix lands in both. Keep what the real Echo does: the 800 ms
+  lead-in and its ~650 ms wake chime open **every** run, the room is noise
+  (~-60 dBFS), never digital silence, one mic stream (spoken words replace
+  room audio), room audio outlasts hassmic's 30 s, and a person answers a
+  follow-up about 1 s after it opens. Check `main.c` / `proto_esphome.c`
+  before modelling a new behaviour.
+- **New scenario:** `smoke/scenarios/<area>.smoke.ts`, plain Vitest with
+  `useSmokeEcho()` and its primitives (`wake`, `answer`, `stayQuiet`,
+  `pressButton`, `bargeIn`, `dropLink`, `announce`). Write the requests as the
+  owner would say them, assert on what Cortecho did (`turn.outcome`,
+  `listensAgain`, the transcribed `said`, server log lines), not on the
+  simulator's own flags, and tolerate the model's wording. Spoken side effects
+  carry `echo.tag` so they can be found and cleaned up.
 
 **Before changing configuration docs:** the runtime has three layers (SQLite
 settings, devices, env-only). Read [docs/configuration.md](docs/configuration.md)
@@ -57,7 +98,7 @@ apps/api/src/
     noise.ts              Noise_NNpsk0_25519_ChaChaPoly_SHA256 on node:crypto
     timezone.ts           POSIX TZ rule of an IANA zone, for GetTimeResponse
     client.ts             EsphomeClient: one socket, hello/subscribe, ping, time, reconnect
-    fake-echo.ts          FakeEcho (hassmic's proto_esphome.c on localhost)
+    fake-echo.ts          FakeEcho (hassmic on localhost); also the smoke suite's simulated Echo
   vad/end-of-speech.ts    energy VAD (adaptive noise floor): ends requests, as HA does
   features/settings/      SQLite store, per-Echo overrides, validation, one-time import, routes
   features/devices/       SQLite CRUD, one client + pipeline per Echo, identity checks, routes
@@ -73,6 +114,11 @@ apps/web/src/
   features/{status,settings,devices,voice}/  pages, queries, components
   components/, lib/       app shell + nav, ui/, api-client, query-client, displays
 e2e/                      Playwright specs, helpers, FakeEcho server
+smoke/                    production smoke tests (not a workspace; not in `npm test` or CI)
+  harness/                setup/lifecycle + scenario API (smoke-echo.ts), Cortecho HTTP client,
+                          voice (TTS cache, levels, transcription), report, matchers, cleanup
+  scenarios/              *.smoke.ts, one file per area
+  .env.smoke.example      every SMOKE_* variable; the real .env.smoke, .runs/, .cache/ are gitignored
 docs/                     user and contributor documentation
 ```
 

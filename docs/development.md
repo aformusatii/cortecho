@@ -78,9 +78,9 @@ No test needs the real Echo, an OpenAI key or the internet.
 ## Production smoke tests
 
 `smoke/` is a separate test suite that drives the **deployed** Cortecho,
-unchanged, through the same interface a real Echo uses (spec
-`specs/production-smoke-tests.md`). It is not a workspace and is never part of
-`npm test` or CI — it needs keys, the production deployment and money.
+unchanged, through the same interface a real Echo uses. It is not a workspace
+and is never part of `npm test` or CI — it needs keys, the production
+deployment and money.
 
 - `npm run smoke:init` — generate the simulated Echo's identity (a 32-byte
   Noise key, a node name and a MAC) and write `smoke/.env.smoke` from the
