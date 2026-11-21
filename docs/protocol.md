@@ -6,6 +6,11 @@ Echo. The Echo is the server; Cortecho is its voice assistant client. The
 implementation follows hassmic's `proto_esphome.c` and Home Assistant's
 ESPHome assist satellite.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/diagrams/turn-sequence-dark.svg">
+  <img src="img/diagrams/turn-sequence-light.svg" alt="Sequence diagram of one voice turn between you, the Echo Dot, Cortecho, the OpenAI API and tools." width="100%">
+</picture>
+
 ## The exchange
 
 | # | Direction | Message | Notes |
