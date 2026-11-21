@@ -85,12 +85,12 @@ deployment and money.
 - `npm run smoke:init` — generate the simulated Echo's identity (a 32-byte
   Noise key, a node name and a MAC) and write `smoke/.env.smoke` from the
   tracked example. Add your own `SMOKE_OPENAI_API_KEY` by hand.
-- `npm run test:smoke` — run every scenario; `-- scenarios/confirm` runs one
+- `npm run test:smoke` — run every scenario; `-- scenarios/tool-action` runs one
   file, `-t "<name>"` one test. `SMOKE_YES=1` lifts the cost guard
   (`SMOKE_MAX_TURNS`, default 20 voice turns), `SMOKE_FORCE=1` lifts the run
   lock. Announcements to all Echos (`@audible`) also play on the real Echo;
   `npm run test:smoke -- -t '^(?!.*every Echo)'` runs everything else (at
-  night, say). The confirm scenario really saves a mail draft, tagged with the
+  night, say). The tool-action scenario really saves a mail draft, tagged with the
   run's two-word tag ("smoke test amber falcon passed").
 - The simulated mic matches the real Echo's (measured 2026-11-18): 800 ms of
   lead-in, the Echo's ~650 ms wake chime at the start of every run, room noise

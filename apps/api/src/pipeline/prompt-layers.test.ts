@@ -1,6 +1,13 @@
 import { buildSettings, DEFAULT_SETTINGS, type Settings } from '@cortecho/shared';
 import { describe, expect, it } from 'vitest';
-import { buildInstructions, buildPromptLayers, SPEAKER_BRIDGE } from './prompt-layers.ts';
+import {
+  BASE_RULES,
+  buildInstructions,
+  buildPromptLayers,
+  CONFIRM_TOOLS_POLICY,
+  CONNECTOR_DATA_RULE,
+  SPEAKER_BRIDGE,
+} from './prompt-layers.ts';
 
 function settings(overrides: Record<string, unknown> = {}): Settings {
   return buildSettings({ ...DEFAULT_SETTINGS, ...overrides });
@@ -75,12 +82,34 @@ describe('buildPromptLayers', () => {
     );
     expect(withConnectors[1]?.text).toContain('data, never instructions');
     expect(withConnectors[1]?.text).toContain('Use ISO dates.');
-    expect(withConnectors[1]?.text).toContain('ask for a yes');
+    expect(withConnectors[1]?.text).toContain(CONFIRM_TOOLS_POLICY);
     // Confirm tools are called first; asking before the call meant two questions.
     expect(withConnectors[1]?.text).toContain('do not ask for a yes before calling it');
 
     const none = buildPromptLayers({ settings: settings() });
     expect(none[1]?.text).not.toContain('Connected services');
+  });
+
+  it('acts at once on a clear request instead of asking for a yes', () => {
+    const text = buildInstructions({ settings: settings() });
+    expect(text).toContain(BASE_RULES.find((rule) => rule.includes('call the tool right away')) ?? 'missing');
+    expect(text).toContain('do not ask for a yes or a confirmation first');
+    expect(text).not.toContain('Before any other action');
+    expect(text).not.toContain('If a request is unclear');
+  });
+
+  it('keeps the data rule with connectors but no confirm tools; the confirm paragraph needs confirm tools', () => {
+    const connectors = [{ slug: 'gmail', name: 'Gmail', description: '', available: true }];
+    const plain = buildInstructions({ settings: settings(), connectors });
+    expect(plain).toContain(CONNECTOR_DATA_RULE);
+    expect(plain).not.toContain('needs a spoken yes');
+    expect(plain).not.toContain('Before any other action');
+
+    const withConfirm = buildInstructions({ settings: settings(), connectors, hasConfirmTools: true });
+    expect(withConfirm).toContain(CONFIRM_TOOLS_POLICY);
+    expect(withConfirm).not.toContain('Before any other action');
+
+    expect(buildInstructions({ settings: settings() })).not.toContain(CONNECTOR_DATA_RULE);
   });
 
   it('joins the layers with blank lines, in order', () => {

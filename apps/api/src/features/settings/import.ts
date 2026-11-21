@@ -82,7 +82,10 @@ export function warnStaleEnvironment(env: NodeJS.ProcessEnv = process.env): void
  * verbatim. Only the household facts are kept.
  */
 export function extractHouseholdPrompt(content: string): { text: string; dropped: string[] } {
-  const baseLines = new Set(BASE_RULES.map(normalise));
+  // The pre-2026-11-21 clarifying rule stays recognised: old SystemPrompt.md files contain it.
+  const baseLines = new Set(
+    [...BASE_RULES, 'If a request is unclear, ask one short question back.'].map(normalise),
+  );
   const policy = normalise(SEARCH_POLICY);
   const kept: string[] = [];
   const dropped: string[] = [];

@@ -75,7 +75,7 @@ export function listenPolicy({ minWaitMs, maxWaitMs }: ListenToolOptions): strin
   return [
     'How the speaker works: the user says the wake word, the light ring turns on and the microphone listens until they stop talking, then your reply is spoken.',
     `After your reply the ring goes off and the microphone stays closed, so the user would have to say the wake word again, unless you call ${LISTEN_TOOL_NAME}.`,
-    `Call ${LISTEN_TOOL_NAME} whenever your reply needs an answer from the user: a clarifying question, a choice between options, a confirmation before you act, or an offer they would answer with yes or no.`,
+    `Call ${LISTEN_TOOL_NAME} whenever your reply needs an answer from the user: a clarifying question, a choice between options, or an offer they would answer with yes or no.`,
     'Call it in the same response as your reply text, never in a response of its own, and make the question the last sentence of your reply.',
     'Do not call it after a complete answer, a statement or a confirmation that something was done, and do not end such replies with a question just to keep talking.',
     `Choose wait_seconds (${min} to ${max}) by how long the user needs before they start answering: about 5 for yes or no, about 8 to pick one of the options you named or give a short fact, up to ${max} when they have to think, look something up or decide.`,

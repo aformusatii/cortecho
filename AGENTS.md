@@ -49,7 +49,7 @@ Guide: [docs/development.md](docs/development.md#production-smoke-tests).
 - **Ask before running it.** It changes production state (enables the Test
   Echo device, writes its per-Echo settings), costs OpenAI money per turn
   (`SMOKE_MAX_TURNS` guards a run, default 20), and has real side effects (the
-  confirm scenario saves a mail draft). The `@audible` all-Echos announcement
+  tool-action scenario saves a mail draft). The `@audible` all-Echos announcement
   plays on the real Echo in the house; `-- -t '^(?!.*every Echo)'` skips it.
 - **No test modes in Cortecho.** Never add a flag, header or device property
   that makes the app treat the Test Echo differently. The difference is the
