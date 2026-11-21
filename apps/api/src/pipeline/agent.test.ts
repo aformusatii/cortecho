@@ -171,6 +171,63 @@ describe('ResponsesAgent', () => {
     expect(String(outputs?.[0]?.output)).toContain('"startedWith":["slow_one","slow_two"]');
   });
 
+  it('does not repeat a call already answered in the turn (no polling), but runs new arguments', async () => {
+    const seen: string[] = [];
+    const responses: FakeResponse[] = [
+      {
+        status: 'completed',
+        output: [
+          {
+            type: 'function_call',
+            call_id: 'c1',
+            name: 'status',
+            arguments: '{"session":"s_1","verbose":true}',
+          },
+        ],
+      },
+      {
+        status: 'completed',
+        output: [
+          {
+            type: 'function_call',
+            call_id: 'c2',
+            name: 'status',
+            arguments: '{"verbose":true,"session":"s_1"}',
+          },
+          { type: 'function_call', call_id: 'c3', name: 'status', arguments: '{"session":"s_2"}' },
+        ],
+      },
+      message('Still running.'),
+    ];
+    const agent = new ResponsesAgent({
+      createResponse: async () => responses.shift() as FakeResponse,
+      tools: new ToolRegistry().register({
+        name: 'status',
+        description: 'Job status.',
+        parameters: { type: 'object' as const, properties: { session: { type: 'string' } } },
+        handler: async (args) => {
+          seen.push(String((args as { session: string }).session));
+          return 'running';
+        },
+      }),
+    });
+
+    const answer = await agent.reply('how is it going', signal, undefined, {
+      settings: makeSettings(),
+      session: { history: [], lastTurnAt: 0 },
+    });
+
+    expect(seen).toEqual(['s_1', 's_2']);
+    expect(answer.text).toBe('Still running.');
+    expect(answer.toolCalls[1]).toEqual(
+      expect.objectContaining({
+        name: 'status',
+        ok: true,
+        result: expect.stringContaining('already called'),
+      }),
+    );
+  });
+
   it('does not retry a failed tool in the same turn and tells the model to report it', async () => {
     let runs = 0;
     const requests: CreateResponseRequest[] = [];

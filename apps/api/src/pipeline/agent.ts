@@ -128,6 +128,11 @@ export class ResponsesAgent implements Agent {
     // 403 on an email attachment was retried and the user was asked to say yes
     // a second time). The model gets an error telling it to report instead.
     const failedTools = new Set<string>();
+    // A call that already succeeded in this turn with the same arguments is not
+    // run again: its answer cannot have changed in the seconds of one turn.
+    // Without this the model polled a background job (runner get_session) round
+    // after round and then wrote garbage instead of a reply (2026-11-20).
+    const doneCalls = new Set<string>();
     // Once asked for, listening holds for the turn's final answer, even when
     // the call came in a round with other tools.
     let listen: ListenRequest | null = null;
@@ -285,6 +290,14 @@ export class ResponsesAgent implements Agent {
               durationMs: 0,
             };
           }
+          if (doneCalls.has(callKey(name, argumentsJson))) {
+            log.info(`tool ${name} not repeated: same call already answered in this turn`, {
+              turn: turnNumber,
+              round,
+            });
+            const output = `${name} was already called with these arguments in this turn and its answer has not changed. Do not call it again in this turn: answer the user now with what you have.`;
+            return { name, arguments: argumentsJson, result: output, output, ok: true, durationMs: 0 };
+          }
           return toolSet.call(name, argumentsJson, {
             signal,
             session,
@@ -302,6 +315,7 @@ export class ResponsesAgent implements Agent {
             ? 'ok'
             : 'failed';
         log.info(`tool ${record.name} ${status} in ${record.durationMs} ms`, { turn: turnNumber, round });
+        if (record.ok && !record.pending) doneCalls.add(callKey(record.name, record.arguments));
         if (!record.ok) {
           failedTools.add(record.name);
           log.warn(`tool ${record.name} failed: ${record.result.slice(0, 300)}`, {
@@ -389,4 +403,23 @@ function extractText(output: ResponseItem[]): string {
     }
   }
   return parts.join(' ');
+}
+
+/** One key per tool call, so the same arguments in another key order still match. */
+function callKey(name: string, argumentsJson: string): string {
+  try {
+    return `${name}\n${JSON.stringify(sortKeys(JSON.parse(argumentsJson)))}`;
+  } catch {
+    return `${name}\n${argumentsJson}`;
+  }
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => [key, sortKeys((value as Record<string, unknown>)[key])]),
+  );
 }
