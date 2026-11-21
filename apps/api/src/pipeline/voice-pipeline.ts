@@ -3,6 +3,7 @@ import path from 'node:path';
 import type {
   PipelineState,
   Settings,
+  TestSoundResult,
   ToolCallRecord,
   Turn,
   TurnOutcome,
@@ -20,6 +21,7 @@ import type { ToolRegistry, ToolSet } from '../tools/registry.ts';
 import { EndOfSpeechDetector, type VadOptions } from '../vad/end-of-speech.ts';
 import type { AgentSessions } from './agent-sessions.ts';
 import { LinearResampler, pcmDurationMs, pcmToWav } from './audio.ts';
+import { CHIME_SAMPLE_RATE, chimePcm } from './chime.ts';
 import type { PromptDevice } from './prompt-layers.ts';
 import type { ReplyAudio, ReplyAudioStore } from './reply-audio.ts';
 import { firstSentence, headThenRest } from './reply-speech.ts';
@@ -44,6 +46,12 @@ const FOLLOW_UP_WINDOW_MS = 15_000;
  * its lead-in and our transcription start.
  */
 const FOLLOW_UP_LISTEN_LIMIT_MS = 27_000;
+/**
+ * The setup wizard's test sound (spec §7.5) waits this long for the Echo to
+ * download the chime and to report AnnounceFinished. A real Echo does both in
+ * well under a second (the chime is ~0.6 s); the cap only covers a stuck link.
+ */
+const TEST_SOUND_WAIT_MS = 8000;
 /**
  * The Echo plays its wake sound (stock ui_wakesound: 650 ms) as a follow-up
  * opens the mic, and the echo canceller leaves part of it in the stream. It is
@@ -104,7 +112,7 @@ export type PipelineOptions = {
   deviceId: number | null;
   /** That Echo's current name and owner-written prompt (layer 3), read per request. */
   device: () => PromptDevice | null;
-  /** Base of the reply URLs when REPLY_AUDIO_BASE_URL is empty (server.ts derives it from the link). */
+  /** Base of the reply URLs when the network.replyBaseUrl setting is empty (derived from the link). */
   fallbackReplyBaseUrl?: () => string;
   /** The tool registry: the turn's ToolSet is frozen from it at the start. */
   tools: ToolRegistry;
@@ -749,7 +757,7 @@ export class VoicePipeline {
       // after the next playback, so it must not go out before a reply that plays.
       this.event(turn, VA_EVENT.INTENT_END, { continue_conversation: listenMs !== null ? '1' : '0' });
       this.event(turn, VA_EVENT.TTS_START, { text });
-      this.event(turn, VA_EVENT.TTS_END, { url: this.replyUrl(reply) });
+      this.event(turn, VA_EVENT.TTS_END, { url: this.replyUrl(reply, turn.settings) });
       this.event(turn, VA_EVENT.RUN_END);
       turn.handedOver = true;
       // The follow-up run arrives right after AnnounceFinished, before this
@@ -814,9 +822,31 @@ export class VoicePipeline {
     return this.options.deviceId === null ? 'web' : `device:${this.options.deviceId}`;
   }
 
-  private replyUrl(reply: ReplyAudio): string {
-    const base = this.options.config.reply.baseUrl || this.options.fallbackReplyBaseUrl?.() || '';
+  private replyUrl(reply: ReplyAudio, settings: Settings): string {
+    const base = settings.network.replyBaseUrl || this.options.fallbackReplyBaseUrl?.() || '';
     return `${base}/api/reply-audio/${reply.id}.wav`;
+  }
+
+  /**
+   * Waits for VoiceAssistantAnnounceFinished with a hard cap (the test sound).
+   * The existing `playbackWaiter` slot is shared with turns; testSound only
+   * runs while the pipeline is idle, so nothing else owns it.
+   */
+  private announceWaiter(timeoutMs: number): { promise: Promise<boolean>; cancel: () => void } {
+    let timer: NodeJS.Timeout | undefined;
+    let settle: ((success: boolean) => void) | null = null;
+    const promise = new Promise<boolean>((resolve) => {
+      const done = (success: boolean) => {
+        if (this.playbackWaiter === done) this.playbackWaiter = null;
+        clearTimeout(timer);
+        resolve(success);
+      };
+      settle = done;
+      this.playbackWaiter = done;
+      timer = setTimeout(() => done(false), timeoutMs);
+      timer.unref();
+    });
+    return { promise, cancel: () => settle?.(false) };
   }
 
   /**
@@ -885,7 +915,9 @@ export class VoicePipeline {
     try {
       await reply.ready(turn.settings.reply.prebufferMs);
       turn.timings.firstAudioMs = this.elapsed(turn);
-      if (!client.sendAnnounce({ mediaId: this.replyUrl(reply), text, startConversation: false })) {
+      if (
+        !client.sendAnnounce({ mediaId: this.replyUrl(reply, turn.settings), text, startConversation: false })
+      ) {
         throw new EchoUnavailableError('ECHO_UNAVAILABLE', 'The Echo is not connected.');
       }
       turn.handedOver = true;
@@ -912,6 +944,52 @@ export class VoicePipeline {
       }
       throw error;
     } finally {
+      this.releaseReply(reply);
+    }
+  }
+
+  /**
+   * POST /api/devices/:id/test-sound (spec §7.5): plays the bundled chime as an
+   * announcement and reports whether the Echo downloaded and played it. No
+   * OpenAI call, so the setup wizard can identify an Echo before the OpenAI
+   * step. Refused (by the route: 409) while the Echo is busy or not connected.
+   */
+  async testSound(): Promise<TestSoundResult> {
+    const { client } = this.options;
+    if (!client.isConnected) {
+      throw new EchoUnavailableError('ECHO_UNAVAILABLE', 'The Echo is not connected.');
+    }
+    if (this.state !== 'idle') {
+      throw new EchoUnavailableError('ECHO_BUSY', 'The Echo is busy with a request.');
+    }
+
+    const snapshot = this.options.settings();
+    // A chime has its own format: startReply would resample it as if it were TTS.
+    this.revokeCurrentReply();
+    const reply = this.options.replies.create(singleChunk(chimePcm()), CHIME_SAMPLE_RATE);
+    this.currentReply = reply;
+    const url = this.replyUrl(reply, snapshot.settings);
+
+    // Register both waits before the announcement: a fast Echo can download
+    // and answer before this function resumes.
+    const served = this.options.replies.waitForServed(reply.id, TEST_SOUND_WAIT_MS);
+    const playback = this.announceWaiter(TEST_SOUND_WAIT_MS);
+    this.state = 'announcing';
+    try {
+      if (!client.sendAnnounce({ mediaId: url, text: '', startConversation: false })) {
+        throw new EchoUnavailableError('ECHO_UNAVAILABLE', 'The Echo is not connected.');
+      }
+      const finished = await playback.promise;
+      // A false report means the Echo gave up: it will not fetch any more, so
+      // do not sit out the full wait. A download that already started is still
+      // reported as downloaded.
+      const downloaded = finished ? await served : this.options.replies.wasServed(reply.id);
+      log.debug(`test sound: downloaded=${downloaded} finished=${finished}`);
+      return { downloaded, finished, url };
+    } finally {
+      playback.cancel();
+      // A voice turn that arrived meanwhile owns the state now.
+      if (this.state === 'announcing') this.state = 'idle';
       this.releaseReply(reply);
     }
   }
@@ -1214,6 +1292,10 @@ function isUsableTranscript(text: string): boolean {
 function signalReason(signal: AbortSignal): string | null {
   if (!signal.aborted) return null;
   return signal.reason instanceof Error ? signal.reason.message : String(signal.reason);
+}
+
+async function* singleChunk(chunk: Buffer): AsyncGenerator<Buffer> {
+  yield chunk;
 }
 
 async function* mapStream(

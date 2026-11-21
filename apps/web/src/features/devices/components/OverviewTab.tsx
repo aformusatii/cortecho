@@ -5,10 +5,11 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { VoiceTestPhrase } from '@/features/settings/components/VoiceTestPhrase.tsx';
+import { ProblemFix } from '@/features/setup/components/ProblemFix.tsx';
 import { StatusDot } from '@/features/status/components/StatusDot.tsx';
 import { TurnsList } from '@/features/status/components/TurnsList.tsx';
 import { CONNECTION_LABELS, formatTime, PIPELINE_LABELS, PROBLEM_LABELS } from '@/lib/displays.ts';
-import { useForgetConversation, useReconnectDevice } from '../api/devices.mutations.ts';
+import { useForgetConversation, useReconnectDevice, useSecureDevice } from '../api/devices.mutations.ts';
 import { deviceTurnsQueryOptions } from '../api/devices.queries.ts';
 
 const CONNECTION_TONE = {
@@ -25,6 +26,7 @@ export function OverviewTab({ device }: { device: DeviceStatus }) {
   const turns = useQuery(deviceTurnsQueryOptions(device.id, TURNS_SHOWN));
   const reconnect = useReconnectDevice();
   const forget = useForgetConversation(device.id);
+  const secure = useSecureDevice();
 
   return (
     <div className="space-y-4">
@@ -33,10 +35,14 @@ export function OverviewTab({ device }: { device: DeviceStatus }) {
           <StatusDot tone={CONNECTION_TONE[device.state]}>{CONNECTION_LABELS[device.state]}</StatusDot>
         </p>
         {device.problem && (
-          <p className="mt-1 text-sm font-medium text-destructive">{PROBLEM_LABELS[device.problem]}</p>
+          <div className="mt-1 space-y-2">
+            <p className="text-sm font-medium text-destructive">{PROBLEM_LABELS[device.problem]}</p>
+            <ProblemFix device={device} />
+          </div>
         )}
         <dl className="mt-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
           <Row label="Doing">{PIPELINE_LABELS[device.pipeline.state]}</Row>
+          <Row label="Security">{device.encryption === 'noise' ? 'Secured' : 'Not secured'}</Row>
           <Row label="Address">{`${device.host}:${device.port}`}</Row>
           <Row label="Node name">{device.nodeName ?? '–'}</Row>
           <Row label="Echo name">{device.info?.friendlyName || device.info?.name || '–'}</Row>
@@ -84,9 +90,22 @@ export function OverviewTab({ device }: { device: DeviceStatus }) {
         >
           <EraserIcon aria-hidden="true" /> {forget.isPending ? 'Forgetting…' : 'Forget conversation'}
         </Button>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Use this after changing the key on the Echo with <code>npm run echo-set-key</code>.
-        </p>
+        {!device.hasKey && device.enabled && device.info?.provisionable && (
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-4 ml-2"
+            disabled={secure.isPending}
+            onClick={() =>
+              secure.mutate(device.id, {
+                onSuccess: () => toast.success('The connection is secured.'),
+                onError: (error) => toast.error(error.message),
+              })
+            }
+          >
+            {secure.isPending ? 'Securing…' : 'Secure now'}
+          </Button>
+        )}
       </section>
 
       <section aria-label="Test phrase" className="rounded-xl border bg-card p-4 shadow-xs">

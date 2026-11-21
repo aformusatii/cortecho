@@ -15,12 +15,13 @@ export const PROBLEM_LABELS: Record<EchoProblem, string> = {
   'invalid-key': 'The Echo rejects this API key',
   'key-not-set': 'The Echo has no key yet: run npm run echo-set-key',
   'unexpected-device': 'Another Echo is at this address: accept the new device or fix the address',
-  'duplicate-node-name': 'Two Echos share this NAME: give each a unique name in hassmic.conf',
+  'duplicate-node-name': 'Two Echos report the same name: give each Echo a unique name in its settings',
+  'reply-address-missing': "The reply address is not set: add this computer's address in Settings → Network",
 };
 
 export const ENCRYPTION_LABELS: Record<EchoEncryption, string> = {
-  noise: 'Encrypted',
-  plaintext: 'Plaintext',
+  noise: 'Secured',
+  plaintext: 'Not secured',
 };
 
 export const PIPELINE_LABELS: Record<PipelineState, string> = {

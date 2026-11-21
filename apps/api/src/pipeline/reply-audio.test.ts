@@ -64,6 +64,56 @@ describe('ReplyAudio.ready', () => {
   });
 });
 
+describe('ReplyAudioStore download hook', () => {
+  it('resolves waitForServed when the reply endpoint serves the id', async () => {
+    const store = new ReplyAudioStore(60_000);
+    const tts = handFed();
+    const reply = store.create(tts.source, 24000);
+    const waited = store.waitForServed(reply.id, 1000);
+    expect(store.wasServed(reply.id)).toBe(false);
+    store.markServed(reply.id);
+    expect(await waited).toBe(true);
+    expect(store.wasServed(reply.id)).toBe(true);
+    tts.end();
+  });
+
+  it('times out when nothing is served', async () => {
+    const store = new ReplyAudioStore(60_000);
+    const tts = handFed();
+    const reply = store.create(tts.source, 24000);
+    expect(await store.waitForServed(reply.id, 20)).toBe(false);
+    expect(store.wasServed(reply.id)).toBe(false);
+    tts.end();
+  });
+
+  it('answers false at once when the reply is revoked or replaced before it is served', async () => {
+    const store = new ReplyAudioStore(60_000);
+    const tts = handFed();
+    const reply = store.create(tts.source, 24000);
+    const waited = store.waitForServed(reply.id, 5000);
+    const startedAt = Date.now();
+    store.revoke(reply);
+    expect(await waited).toBe(false);
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+    expect(store.wasServed(reply.id)).toBe(false);
+    // An unknown id is answered immediately too.
+    expect(await store.waitForServed(reply.id, 5000)).toBe(false);
+    tts.end();
+  });
+
+  it('answers false when the reply expires', async () => {
+    const store = new ReplyAudioStore(1);
+    const tts = handFed();
+    const reply = store.create(tts.source, 24000);
+    const waited = store.waitForServed(reply.id, 5000);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    // get() notices the expiry and settles the waiter instead of the timeout.
+    expect(store.get(reply.id)).toBeNull();
+    expect(await waited).toBe(false);
+    tts.end();
+  });
+});
+
 describe('ReplyAudioStore', () => {
   it('serves two devices’ current replies at once and forgets a revoked one', async () => {
     const store = new ReplyAudioStore(60_000);

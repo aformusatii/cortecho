@@ -6,7 +6,7 @@ import {
 } from '@cortecho/shared';
 import { Link } from '@tanstack/react-router';
 import { ChevronRightIcon } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import type { FormValues } from '../draft.ts';
 import { SettingsFields } from './SettingsFields.tsx';
 
@@ -83,6 +83,22 @@ export function SettingsSection({
     </>
   );
 
+  const [open, setOpen] = useState(false);
+
+  // A Fix link from the status page lands on `#section-network`; on a phone the
+  // section is a collapsed <details>, so the anchor must open it itself.
+  useEffect(() => {
+    if (!collapsed) return;
+    const reveal = () => {
+      if (window.location.hash !== `#section-${section}`) return;
+      setOpen(true);
+      document.getElementById(`section-${section}`)?.scrollIntoView();
+    };
+    reveal();
+    window.addEventListener('hashchange', reveal);
+    return () => window.removeEventListener('hashchange', reveal);
+  }, [collapsed, section]);
+
   const title = (
     <span className="inline-flex items-center gap-2">
       {SETTINGS_SECTION_LABELS[section]}
@@ -97,7 +113,12 @@ export function SettingsSection({
 
   if (collapsed) {
     return (
-      <details id={`section-${section}`} className="scroll-mt-24 rounded-xl border bg-card shadow-xs">
+      <details
+        id={`section-${section}`}
+        open={open}
+        onToggle={(event) => setOpen(event.currentTarget.open)}
+        className="scroll-mt-24 rounded-xl border bg-card shadow-xs"
+      >
         <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-2 px-4 text-base font-semibold select-none">
           {title}
           <ChevronRightIcon aria-hidden="true" className="size-4 text-muted-foreground" />

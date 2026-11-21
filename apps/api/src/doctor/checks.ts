@@ -1,3 +1,4 @@
+import type { EchoProbeResult } from '@cortecho/shared';
 import {
   type DoctorCheck,
   type DoctorReport,
@@ -5,12 +6,12 @@ import {
   SETTING_DESCRIPTORS,
 } from '@cortecho/shared';
 import type { Config } from '../config.ts';
+import { probeEcho } from '../esphome/adopt.ts';
 import type { Device } from '../features/devices/devices.repository.ts';
 import { isPrivateIpv4 } from '../features/devices/host.ts';
 import type { SettingsStore } from '../features/settings/settings-store.ts';
 import { parseSecretKey } from '../lib/secret-box.ts';
 import { effectivePolicy, type McpManager, reviewReason } from '../mcp/mcp-manager.ts';
-import { type EchoProbeResult, probeEcho } from './probe.ts';
 
 export type DoctorInput = {
   config: Config;
@@ -109,7 +110,7 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
     checks.push(check('TTS model', 'pass', `${ttsModel} is configured.`));
   }
 
-  checks.push(await replyCheck(config, devices, production, fetchImpl));
+  checks.push(await replyCheck(now.settings.network.replyBaseUrl, devices, production, fetchImpl));
   checks.push(await openAiCheck(settings, config, fetchImpl));
   checks.push(...connectorChecks(config, input.mcp));
 
@@ -125,29 +126,63 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
 }
 
 function probeCheck(device: Device, result: EchoProbeResult): DoctorCheck {
-  const status: DoctorStatus =
-    result.reachable && result.problem === undefined
-      ? 'pass'
-      : result.problem === 'unreachable'
-        ? 'fail'
-        : 'fail';
-  const fix =
-    result.problem === 'encryption-required'
-      ? "Add this Echo's API key on the Connection tab, or delete state/api_key on the Echo."
-      : result.problem === 'invalid-key'
-        ? "The stored key is not the Echo's key. Re-run echo-set-key or correct the key."
-        : result.problem === 'key-not-set'
-          ? 'The device has a key but the Echo has none: run `npm run echo-set-key -- --host <echo-ip>`.'
-          : result.problem === 'unreachable' || result.problem === 'timeout'
-            ? 'Check the address, that hassmic runs, and that PROTO=esphome.'
-            : undefined;
-  return check(`Echo ${device.name}`, status, result.message, fix);
+  if (!result.reachable) {
+    return check(
+      `Echo ${device.name}`,
+      'fail',
+      result.code === 'timeout'
+        ? `${device.host}:${device.port} did not answer in time.`
+        : result.code === 'not-esphome'
+          ? `${device.host}:${device.port} answered, but not as an ESPHome device.`
+          : `${device.host}:${device.port} is not reachable.`,
+      'Check the address, that hassmic runs, and that PROTO=esphome.',
+    );
+  }
+  if (result.isVoiceAssistant === false) {
+    return check(
+      `Echo ${device.name}`,
+      'fail',
+      `The device at ${device.host}:${device.port} does not offer a voice assistant.`,
+      'Check that the Echo runs echo-dot-assist in ESPHome mode (PROTO=esphome).',
+    );
+  }
+  if (result.keyState === 'set') {
+    return check(
+      `Echo ${device.name}`,
+      'fail',
+      device.apiKey === null
+        ? 'The Echo requires an API key but this device has none.'
+        : "The stored key is not the Echo's key.",
+      device.apiKey === null
+        ? "Add this Echo's API key on the Connection tab, or delete state/api_key on the Echo."
+        : 'Re-run `npm run echo-set-key`, or correct the key on the Connection tab.',
+    );
+  }
+  if (result.keyState === 'none' && device.apiKey !== null) {
+    return check(
+      `Echo ${device.name}`,
+      'fail',
+      'This device has a key but the Echo has none.',
+      'Run `npm run echo-set-key -- --host <echo-ip>` and add the key on the Connection tab.',
+    );
+  }
+  return check(
+    `Echo ${device.name}`,
+    'pass',
+    `Connected to ${result.nodeName ?? device.host} ${device.apiKey === null ? 'in plaintext' : 'with the stored key'}.`,
+  );
 }
 
 function staleEnvironmentCheck(settings: SettingsStore, env: NodeJS.ProcessEnv): DoctorCheck {
-  const names = SETTING_DESCRIPTORS.filter(
-    (descriptor) => descriptor.env && descriptor.env !== 'TZ' && (env[descriptor.env] ?? '').trim() !== '',
-  ).map((descriptor) => descriptor.env as string);
+  const names = SETTING_DESCRIPTORS.filter((descriptor) => {
+    if (!descriptor.env || descriptor.env === 'TZ') return false;
+    if ((env[descriptor.env] ?? '').trim() === '') return false;
+    // Pending, not ignored: import.ts copies it into the setting once (§8.1).
+    if (descriptor.key === 'network.replyBaseUrl') {
+      return settings.storedValues()[descriptor.key] !== undefined;
+    }
+    return true;
+  }).map((descriptor) => descriptor.env as string);
   const current = settings.current().settings.assistant.timeZone;
   const tz = (env.TZ ?? '').trim();
   // TZ also sets the container clock, so it is normal to keep it. Only warn
@@ -160,47 +195,47 @@ function staleEnvironmentCheck(settings: SettingsStore, env: NodeJS.ProcessEnv):
     'environment',
     'warn',
     `These imported variables are ignored now: ${names.join(', ')}.`,
-    'Change the values in the web UI (Settings / Echos). Only reply/OpenAI base URLs and tool settings come from the environment.',
+    'Change the values in the web UI (Settings / Echos). Only the OpenAI base URL and tool settings come from the environment.',
   );
 }
 
 async function replyCheck(
-  config: Config,
+  baseUrl: string,
   devices: Device[],
   production: boolean,
   fetchImpl: typeof fetch,
 ): Promise<DoctorCheck> {
   const enabled = devices.filter((device) => device.enabled);
-  if (!config.reply.baseUrl) {
+  if (!baseUrl) {
     if (production && enabled.length > 0) {
       return check(
         'reply address',
         'fail',
-        'REPLY_AUDIO_BASE_URL is empty, so the Echo cannot download replies.',
-        "Set it to this host's LAN address and port, e.g. http://192.168.1.10:3000.",
+        'The reply address is not set, so the Echo cannot download replies.',
+        "Set it under Settings → Network to this host's LAN address and port, e.g. http://192.168.1.10:3000.",
       );
     }
     return check(
       'reply address',
       'warn',
-      "REPLY_AUDIO_BASE_URL is empty; the Echo link's local address is used (fine for localhost development).",
-      'Set it for Docker: http://<docker-host-lan-ip>:3000.',
+      "The reply address is not set; the Echo link's local address is used (fine for localhost development).",
+      'Set it under Settings → Network for Docker: http://<docker-host-lan-ip>:3000.',
     );
   }
 
   let url: URL;
   try {
-    url = new URL(config.reply.baseUrl);
+    url = new URL(baseUrl);
   } catch {
     return check(
       'reply address',
       'fail',
-      `REPLY_AUDIO_BASE_URL is not a valid URL: "${config.reply.baseUrl}".`,
-      'Use a full URL, e.g. http://192.168.1.10:3000.',
+      `The reply address is not a valid URL: "${baseUrl}".`,
+      'Set it under Settings → Network, e.g. http://192.168.1.10:3000.',
     );
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:')
-    return check('reply address', 'fail', 'REPLY_AUDIO_BASE_URL must be http:// or https://.');
+    return check('reply address', 'fail', 'The reply address must be http:// or https://.');
   if (/^\d+\.\d+\.\d+\.\d+$/.test(url.hostname) && !isPrivateIpv4(url.hostname)) {
     return check(
       'reply address',
@@ -211,22 +246,22 @@ async function replyCheck(
   }
 
   try {
-    const response = await fetchImpl(`${config.reply.baseUrl}/api/health`, {
+    const response = await fetchImpl(`${baseUrl}/api/health`, {
       signal: AbortSignal.timeout(3000),
     });
     if (!response.ok)
       return check(
         'reply address',
         'fail',
-        `${config.reply.baseUrl}/api/health answered ${response.status}.`,
+        `${baseUrl}/api/health answered ${response.status}.`,
         'Check that the app is running and the port is published.',
       );
-    return check('reply address', 'pass', `${config.reply.baseUrl}/api/health answers from this machine.`);
+    return check('reply address', 'pass', `${baseUrl}/api/health answers from this machine.`);
   } catch (error) {
     return check(
       'reply address',
       'fail',
-      `Could not reach ${config.reply.baseUrl}/api/health (${error instanceof Error ? error.message : String(error)}).`,
+      `Could not reach ${baseUrl}/api/health (${error instanceof Error ? error.message : String(error)}).`,
       'Run the doctor inside the container (`docker compose exec app cortecho doctor`) and check the LAN address.',
     );
   }

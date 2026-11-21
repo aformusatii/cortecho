@@ -17,6 +17,8 @@ type Spec = {
   nodeName?: string;
   /** A node name already learned by the gateway (to test the unexpected-device guard). */
   knownNodeName?: string;
+  /** A MAC already learned by the gateway (to test the unexpected-device guard). */
+  knownMac?: string;
   prompt?: string;
   overrides?: Record<string, unknown>;
   enabled?: boolean;
@@ -29,8 +31,12 @@ async function setup(
   ],
 ) {
   echoes = await Promise.all(
-    specs.map(async (spec) => {
-      const echo = new FakeEcho({ nodeName: spec.nodeName ?? spec.name.toLowerCase() });
+    specs.map(async (spec, index) => {
+      // Each fake Echo is a distinct device: the MAC is the identity now.
+      const echo = new FakeEcho({
+        nodeName: spec.nodeName ?? spec.name.toLowerCase(),
+        macAddress: fakeMac(index + 1),
+      });
       await echo.start();
       return echo;
     }),
@@ -43,11 +49,17 @@ async function setup(
     overrides: spec.overrides,
     enabled: spec.enabled,
     nodeName: spec.knownNodeName,
+    mac: spec.knownMac,
   }));
   ctx = createTestRuntime({ devices });
   for (const echo of echoes) echo.fetchAudio = ctx.fetchAudio;
   await ctx.startDevices();
   return ctx;
+}
+
+/** "02000000000N": one MAC (12 hex, the stored form) per fake Echo in a test. */
+function fakeMac(index: number): string {
+  return `0200000000${index.toString(16).padStart(2, '0')}`;
 }
 
 async function bothConnected() {
@@ -277,7 +289,7 @@ describe('two Echos', () => {
   it('adds, disables, edits and deletes an Echo at runtime', async () => {
     await setup([{ name: 'Kitchen', nodeName: 'kitchen' }]);
     await bothConnected();
-    const bedroom = new FakeEcho({ nodeName: 'bedroom' });
+    const bedroom = new FakeEcho({ nodeName: 'bedroom', macAddress: fakeMac(2) });
     await bedroom.start();
     bedroom.fetchAudio = ctx.fetchAudio;
     echoes.push(bedroom);
@@ -307,7 +319,8 @@ describe('two Echos', () => {
     expect(ctx.devices.runtime(created.id)?.client).toBe(client);
 
     // Moving it to another address replaces the runtime (old link closed).
-    const other = new FakeEcho({ nodeName: 'bedroom' });
+    // The same Echo at a new address: same MAC, or the guard would see another device.
+    const other = new FakeEcho({ nodeName: 'bedroom', macAddress: fakeMac(2) });
     await other.start();
     other.fetchAudio = ctx.fetchAudio;
     echoes.push(other);
@@ -356,6 +369,30 @@ describe('two Echos', () => {
     await setup([{ name: 'Kitchen' }]);
     await bothConnected();
     await waitUntil(() => ctx.devices.list()[0]?.nodeName === 'kitchen');
+  });
+
+  it('learns the MAC at the first connect and shows it in the status', async () => {
+    await setup([{ name: 'Kitchen' }]);
+    await bothConnected();
+    await waitUntil(() => ctx.devices.list()[0]?.mac === fakeMac(1));
+    const statuses = await json<DeviceStatus[]>(await ctx.app.request('/api/devices'));
+    expect(statuses[0]?.mac).toBe(fakeMac(1));
+  });
+
+  it('treats a different MAC as an unexpected device and adopts it on accept', async () => {
+    await setup([{ name: 'Kitchen', nodeName: 'kitchen', knownMac: '0200000000ff' }]);
+    await waitUntil(() => ctx.devices.list()[0]?.problem === 'unexpected-device');
+    await waitUntil(() => !(echoes[0]?.isSubscribed ?? true));
+
+    const accepted = await ctx.app.request(`/api/devices/${deviceId('Kitchen')}/accept-device`, {
+      method: 'POST',
+    });
+    expect(accepted.status).toBe(200);
+    expect(await json<DeviceStatus>(accepted)).toMatchObject({
+      mac: fakeMac(1),
+      problem: null,
+    });
+    await waitUntil(() => echoes[0]?.isSubscribed ?? false);
   });
 });
 

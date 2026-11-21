@@ -16,7 +16,11 @@ import {
   StaleSettingsError,
   validateChanges,
 } from './effective.ts';
-import { createSettingsRepository, type SettingsDiff } from './settings.repository.ts';
+import {
+  createSettingsRepository,
+  type SettingsChangeSource,
+  type SettingsDiff,
+} from './settings.repository.ts';
 
 export { SettingsValidationError, StaleSettingsError } from './effective.ts';
 
@@ -138,7 +142,11 @@ export class SettingsStore {
    * silently overwrite each other. The whole resolved snapshot of every Echo
    * is validated too, so a global change cannot break a device's overrides.
    */
-  apply(changes: Readonly<Record<string, unknown>>, expectedVersion: number): SettingsSnapshot {
+  apply(
+    changes: Readonly<Record<string, unknown>>,
+    expectedVersion: number,
+    { source = 'owner' }: { source?: SettingsChangeSource } = {},
+  ): SettingsSnapshot {
     if (expectedVersion !== this.currentVersion) throw new StaleSettingsError(this.currentVersion);
 
     const normalised = validateChanges(changes);
@@ -146,7 +154,16 @@ export class SettingsStore {
     // from the layer below are kept (spec §9.1).
     for (const [key, value] of Object.entries(normalised)) {
       const descriptor = SETTING_BY_KEY.get(key);
-      if (descriptor && !descriptor.secret && sameValue(value, descriptor.default)) {
+      // network.replyBaseUrl is the one key whose stored emptiness matters: the
+      // upgrade copy (import.ts) must never resurrect an old
+      // REPLY_AUDIO_BASE_URL after the owner cleared the field, so an explicit
+      // '' is kept instead of being collapsed to the default and deleted.
+      if (
+        descriptor &&
+        !descriptor.secret &&
+        key !== 'network.replyBaseUrl' &&
+        sameValue(value, descriptor.default)
+      ) {
         normalised[key] = null;
       }
     }
@@ -170,7 +187,7 @@ export class SettingsStore {
     if (diff.length === 0) return this.current();
 
     const nextVersion = this.currentVersion + 1;
-    this.repository.save(diff, nextVersion, new Date().toISOString(), { scope: 'global' });
+    this.repository.save(diff, nextVersion, new Date().toISOString(), { scope: 'global', source });
 
     for (const [key, value] of Object.entries(normalised)) {
       if (value === null) delete this.values[key];
@@ -267,7 +284,10 @@ export class SettingsStore {
     }
     if (diff.length === 0) return null;
     const nextVersion = this.currentVersion + 1;
-    this.repository.save(diff, nextVersion, new Date().toISOString(), { scope: 'global' });
+    this.repository.save(diff, nextVersion, new Date().toISOString(), {
+      scope: 'global',
+      source: 'import',
+    });
     for (const [key, value] of Object.entries(validated)) this.values[key] = value;
     this.currentVersion = nextVersion;
     const snapshot = this.current();
@@ -283,6 +303,15 @@ export class SettingsStore {
 
   history(limit: number, scope?: string) {
     return this.repository.history(limit, scope);
+  }
+
+  /**
+   * Whether the owner already changed one of these keys through the API/UI.
+   * Imported and upgraded values are in the history too, but they are not the
+   * owner's decision (the onboarding's Home step must still ask).
+   */
+  hasHistory(keys: readonly string[]): boolean {
+    return this.repository.hasOwnerChangeFor(keys);
   }
 
   /** Reverts a saved change to its `old_value`, honoring the row's scope. */

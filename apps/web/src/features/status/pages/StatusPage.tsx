@@ -3,6 +3,8 @@ import { AlertTriangleIcon } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
+import { MovedEchoRepairs } from '@/features/setup/components/MovedEchoRepairs.tsx';
+import { SetupBanner } from '@/features/setup/components/SetupBanner.tsx';
 import { healthQueryOptions, turnsQueryOptions } from '../api/status.queries.ts';
 import { DiagnosticsCard } from '../components/DiagnosticsCard.tsx';
 import { HealthCards } from '../components/HealthCards.tsx';
@@ -38,6 +40,10 @@ export function StatusPage() {
           Every Echo's connection, the voice pipeline and the latest turns. Refreshes every few seconds.
         </p>
       </div>
+
+      <SetupBanner />
+
+      <MovedEchoRepairs />
 
       {health.isPending ? (
         <div role="status" aria-busy="true" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

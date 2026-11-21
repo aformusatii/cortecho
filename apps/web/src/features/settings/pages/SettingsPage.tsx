@@ -19,6 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { ConnectorsTab } from '@/features/connectors/pages/ConnectorsTab.tsx';
 import { useReconnectDevice } from '@/features/devices/api/devices.mutations.ts';
 import { deviceSettingsQueryOptions, devicesQueryOptions } from '@/features/devices/api/devices.queries.ts';
+import { TestSoundButton } from '@/features/setup/components/TestSoundButton.tsx';
 import { isApiError } from '@/lib/api-client.ts';
 import { useMediaQuery } from '@/lib/use-media-query.ts';
 import { useSaveSettings } from '../api/settings.mutations.ts';
@@ -323,6 +324,8 @@ function GeneralSettings() {
                     </Button>
                   ) : section === 'voice' ? (
                     <VoiceTestPhrase devices={deviceList} voice={voicePreview} />
+                  ) : section === 'network' ? (
+                    <TestSoundButton devices={deviceList} />
                   ) : section === 'advanced' ? (
                     <div className="space-y-2">
                       <p className="text-sm text-muted-foreground">

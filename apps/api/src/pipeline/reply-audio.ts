@@ -24,6 +24,9 @@ export class ReplyAudio {
   error: Error | null = null;
   /** Set when the first download starts (for the "played" timeout). */
   firstFetchAtMs: number | null = null;
+  /** Set when the reply endpoint started serving this id (the download hook). */
+  private servedAtMs: number | null = null;
+  private servedWaiters: ((served: boolean) => void)[] = [];
 
   constructor(source: AsyncIterable<Buffer>, sampleRate: number) {
     this.sampleRate = sampleRate;
@@ -33,6 +36,47 @@ export class ReplyAudio {
   /** Audio length so far, in ms. */
   get durationMs(): number {
     return Math.round((this.bytes / 2 / this.sampleRate) * 1000);
+  }
+
+  /** The reply endpoint started serving this id (test sound, diagnostics). */
+  get wasServed(): boolean {
+    return this.servedAtMs !== null;
+  }
+
+  /** A download started: only the first call counts, and it wakes every waiter. */
+  markServed(): void {
+    if (this.servedAtMs !== null) return;
+    this.servedAtMs = Date.now();
+    log.debug(`reply ${this.id} served`);
+    const waiters = this.servedWaiters;
+    this.servedWaiters = [];
+    for (const waiter of waiters) waiter(true);
+  }
+
+  /** Resolves true when a download starts, false on timeout or when the reply ends. */
+  waitForServed(timeoutMs: number): Promise<boolean> {
+    if (this.servedAtMs !== null) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const done = (served: boolean) => {
+        clearTimeout(timer);
+        const index = this.servedWaiters.indexOf(done);
+        if (index >= 0) this.servedWaiters.splice(index, 1);
+        resolve(served);
+      };
+      const timer = setTimeout(() => done(false), timeoutMs);
+      timer.unref();
+      this.servedWaiters.push(done);
+    });
+  }
+
+  /**
+   * The reply was revoked, replaced or expired: no download can start any more,
+   * so nobody waiting for one should sit out the timeout.
+   */
+  endServedWaiters(): void {
+    const waiters = this.servedWaiters;
+    this.servedWaiters = [];
+    for (const waiter of waiters) waiter(false);
   }
 
   /**
@@ -132,14 +176,33 @@ export class ReplyAudioStore {
     if (!reply) return null;
     if (Date.now() - reply.createdAtMs > this.ttlMs) {
       this.current.delete(id);
+      reply.endServedWaiters();
       return null;
     }
     return reply;
   }
 
+  /** The reply endpoint started serving `id` (called by GET /api/reply-audio/:id). */
+  markServed(id: string): void {
+    this.get(id)?.markServed();
+  }
+
+  /** Resolves true when the reply is downloaded; false on timeout, revoke or expiry. */
+  waitForServed(id: string, timeoutMs: number): Promise<boolean> {
+    const reply = this.get(id);
+    if (!reply) return Promise.resolve(false);
+    return reply.waitForServed(timeoutMs);
+  }
+
+  /** Whether this reply was ever downloaded (the test sound's early answer). */
+  wasServed(id: string): boolean {
+    return this.get(id)?.wasServed ?? false;
+  }
+
   /** Ends serving `reply`. */
   revoke(reply: ReplyAudio): void {
     this.current.delete(reply.id);
+    reply.endServedWaiters();
   }
 
   /** How many replies are being served (tests, diagnostics). */
@@ -150,7 +213,10 @@ export class ReplyAudioStore {
   private sweep(): void {
     const now = Date.now();
     for (const [id, reply] of this.current) {
-      if (now - reply.createdAtMs > this.ttlMs) this.current.delete(id);
+      if (now - reply.createdAtMs > this.ttlMs) {
+        this.current.delete(id);
+        reply.endServedWaiters();
+      }
     }
   }
 }

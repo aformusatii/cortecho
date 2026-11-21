@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+  completeSetup,
   createDevice,
   deleteDevice,
   FAKE_ECHO_PORTS,
@@ -22,6 +23,10 @@ async function openSettings(page: import('@playwright/test').Page) {
 }
 
 test.describe('Settings page', () => {
+  test.beforeEach(async ({ request }) => {
+    await completeSetup(request);
+  });
+
   test('edits, validates, saves and resets a value', async ({ page }, testInfo) => {
     await openSettings(page);
     const field = page.getByLabel(IDLE_LABEL, { exact: true });

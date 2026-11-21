@@ -1,0 +1,1 @@
+ALTER TABLE `settings_changes` ADD `source` text DEFAULT 'owner' NOT NULL;

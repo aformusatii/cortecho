@@ -1,5 +1,5 @@
 import type { DeviceKind } from '@cortecho/shared';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { Db } from '../../db/client.ts';
 import { type DeviceRow, devices, turns } from '../../db/schema.ts';
 
@@ -17,6 +17,8 @@ export type Device = {
   overrides: Record<string, unknown>;
   /** hassmic's node name, learned at the first connect. */
   nodeName: string | null;
+  /** hassmic's DeviceInfo MAC as 12 lower-case hex, learned at the first connect. */
+  mac: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -31,14 +33,19 @@ export type DeviceInput = {
   prompt: string;
 };
 
+/** What only creation (adoption, import) may set: the learned identity. */
+export type DeviceSeed = DeviceInput & { mac?: string | null; nodeName?: string | null };
+
 /** Which unique column a create/update collided with. */
 export class DuplicateDeviceError extends Error {
-  readonly field: 'name' | 'host';
-  constructor(field: 'name' | 'host') {
+  readonly field: 'name' | 'host' | 'mac';
+  constructor(field: 'name' | 'host' | 'mac') {
     super(
       field === 'name'
         ? 'Another Echo already uses this name.'
-        : 'Another Echo already uses this address and port.',
+        : field === 'mac'
+          ? 'Another Echo already has this MAC address.'
+          : 'Another Echo already uses this address and port.',
     );
     this.name = 'DuplicateDeviceError';
     this.field = field;
@@ -62,6 +69,7 @@ export function createDevicesRepository(db: Db) {
       prompt: value.prompt,
       overrides: parseOverrides(value.overrides),
       nodeName: value.nodeName,
+      mac: value.mac,
       createdAt: value.createdAt,
       updatedAt: value.updatedAt,
     };
@@ -77,11 +85,25 @@ export function createDevicesRepository(db: Db) {
       return found ? row(found) : null;
     },
 
+    findByHostPort(host: string, port: number): Device | null {
+      const found = db
+        .select()
+        .from(devices)
+        .where(and(eq(devices.host, host), eq(devices.port, port)))
+        .get();
+      return found ? row(found) : null;
+    },
+
+    findByMac(mac: string): Device | null {
+      const found = db.select().from(devices).where(eq(devices.mac, mac)).get();
+      return found ? row(found) : null;
+    },
+
     count(): number {
       return db.select({ id: devices.id }).from(devices).all().length;
     },
 
-    create(input: DeviceInput): Device {
+    create(input: DeviceSeed): Device {
       const now = new Date().toISOString();
       try {
         const created = db
@@ -95,6 +117,8 @@ export function createDevicesRepository(db: Db) {
             enabled: input.enabled,
             prompt: input.prompt,
             overrides: '{}',
+            nodeName: input.nodeName ?? null,
+            mac: input.mac ?? null,
             createdAt: now,
             updatedAt: now,
           })
@@ -149,6 +173,21 @@ export function createDevicesRepository(db: Db) {
       return updated ? row(updated) : null;
     },
 
+    /** Learns the Echo's MAC. Throws DuplicateDeviceError when another row already has it. */
+    setMac(id: number, mac: string | null): Device | null {
+      try {
+        const updated = db
+          .update(devices)
+          .set({ mac, updatedAt: new Date().toISOString() })
+          .where(eq(devices.id, id))
+          .returning()
+          .get();
+        return updated ? row(updated) : null;
+      } catch (error) {
+        throw toDuplicate(error);
+      }
+    },
+
     /**
      * Deletes the row. The turns keep their history with device_id null: the
      * generated migration's FK has no ON DELETE action (SQLite cannot add one
@@ -182,6 +221,7 @@ function toDuplicate(error: unknown): unknown {
   if (message.includes('UNIQUE constraint failed')) {
     if (message.includes('devices.name')) return new DuplicateDeviceError('name');
     if (message.includes('devices.host')) return new DuplicateDeviceError('host');
+    if (message.includes('devices.mac')) return new DuplicateDeviceError('mac');
   }
   return error;
 }

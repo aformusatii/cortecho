@@ -113,6 +113,7 @@ describe('voice routes', () => {
     await reply.finished();
     const response = await app.request(`/api/reply-audio/${reply.id}.wav`);
     expect(response.status).toBe(200);
+    expect(ctx.replies.wasServed(reply.id)).toBe(true);
     expect(response.headers.get('content-type')).toBe('audio/wav');
     const wav = Buffer.from(await response.arrayBuffer());
     expect(wav.toString('ascii', 0, 4)).toBe('RIFF');

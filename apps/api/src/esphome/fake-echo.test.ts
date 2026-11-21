@@ -11,6 +11,7 @@ import {
   PlaintextCodec,
 } from './framing.ts';
 import {
+  decodeDeviceInfo,
   decodeVoiceAssistantAudio,
   decodeVoiceAssistantRequest,
   encodeAnnounceRequest,
@@ -20,6 +21,7 @@ import {
   encodeVoiceAssistantEvent,
   MSG,
   VA_EVENT,
+  VA_FEATURE,
 } from './messages.ts';
 import { NoiseInitiator } from './noise.ts';
 
@@ -293,5 +295,74 @@ describe('one mic (smoke-suite primitives)', () => {
       peak(chunks.at(-1)?.data ?? Buffer.alloc(0)) * 5,
     );
     await echo.stop();
+  });
+});
+
+describe('adoption simulation', () => {
+  it('counts connections, refuses beyond maxClients and keeps the peak right', async () => {
+    const echo = new FakeEcho({ maxClients: 1 });
+    const port = await echo.start();
+    try {
+      const first = await rawPlaintextClient(port);
+      await waitUntil(() => echo.openConnections === 1);
+      // hassmic refuses the extra socket: the first one keeps the slot.
+      await rawPlaintextClient(port);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(echo.connectionsAccepted).toBe(1);
+      expect(echo.openConnections).toBe(1);
+      expect(echo.maxOpenConnections).toBe(1);
+
+      first.socket.destroy();
+      await waitUntil(() => echo.openConnections === 0);
+      const next = await rawPlaintextClient(port);
+      await waitUntil(() => echo.connectionsAccepted === 2);
+      next.socket.destroy();
+    } finally {
+      await echo.stop();
+    }
+  });
+
+  it('serves the configured voice assistant feature bits', async () => {
+    const echo = new FakeEcho({ voiceAssistantFlags: VA_FEATURE.VOICE_ASSISTANT });
+    const port = await echo.start();
+    try {
+      const client = await rawPlaintextClient(port);
+      client.send(MSG.DEVICE_INFO_REQUEST, Buffer.alloc(0));
+      await waitUntil(() => client.messages.some((m) => m.type === MSG.DEVICE_INFO_RESPONSE));
+      const payload = client.messages.find((m) => m.type === MSG.DEVICE_INFO_RESPONSE)?.payload;
+      expect(decodeDeviceInfo(payload as Buffer).voiceAssistantFeatureFlags).toBe(VA_FEATURE.VOICE_ASSISTANT);
+      client.socket.destroy();
+    } finally {
+      await echo.stop();
+    }
+  });
+
+  it('loses the SetKey answer after storing the key, or without storing it', async () => {
+    const key = Buffer.alloc(32, 9);
+    const zero = Buffer.alloc(32);
+    const stored = new FakeEcho({ loseSetKeyResponses: 1, storeKeyWhenLost: true });
+    const storedPort = await stored.start();
+    try {
+      const client = await rawNoiseClient(storedPort, zero);
+      client.send(MSG.NOISE_ENCRYPTION_SET_KEY_REQUEST, encodeSetKeyRequest(key.toString('base64')));
+      await waitUntil(() => stored.apiKey !== null);
+      await waitUntil(() => client.socket.destroyed);
+      expect(stored.setKeyRequests).toBe(1);
+      expect(stored.echoLog).toContain('set-key: answer lost');
+    } finally {
+      await stored.stop();
+    }
+
+    const dropped = new FakeEcho({ loseSetKeyResponses: 1 });
+    const droppedPort = await dropped.start();
+    try {
+      const client = await rawNoiseClient(droppedPort, zero);
+      client.send(MSG.NOISE_ENCRYPTION_SET_KEY_REQUEST, encodeSetKeyRequest(key.toString('base64')));
+      await waitUntil(() => client.socket.destroyed);
+      expect(dropped.apiKey).toBeNull();
+      expect(dropped.setKeyRequests).toBe(1);
+    } finally {
+      await dropped.stop();
+    }
   });
 });

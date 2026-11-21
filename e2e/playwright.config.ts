@@ -4,7 +4,9 @@ const PORT = 3200;
 // A separate, fresh database so e2e tests never touch the development data.
 // No ECHO_HOST (ESPHome client off) and no OpenAI key: the UI must work
 // without either, and the tests never spend API credits.
-const E2E_ENV = `DATABASE_PATH=./data/e2e.db PORT=${PORT} ECHO_HOST= OPENAI_API_KEY= CORTECHO_SECRET_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= PUBLIC_BASE_URL=http://localhost:${PORT}`;
+// DISCOVERY_EXTRA_TARGETS points the subnet scan at the two discoverable
+// FakeEchos; the keyed and hidden simulators stay out of it on purpose.
+const E2E_ENV = `DATABASE_PATH=./data/e2e.db PORT=${PORT} ECHO_HOST= OPENAI_API_KEY= CORTECHO_SECRET_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= PUBLIC_BASE_URL=http://localhost:${PORT} DISCOVERY_EXTRA_TARGETS=127.0.0.1:26101,127.0.0.1:26102`;
 
 export default defineConfig({
   testDir: '.',
@@ -37,24 +39,27 @@ export default defineConfig({
     { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 900 } } },
   ],
   // Tests run against the PRODUCTION build: the same single-port server,
-  // static files and service worker that Docker ships. Two FakeEchos listen
+  // static files and service worker that Docker ships. Four FakeEchos listen
   // on localhost so device flows (add, connect, say) run without hardware.
   webServer: [
     {
-      command: `npm run build && rm -f data/e2e.db* && ${E2E_ENV} NODE_ENV=production node apps/api/src/server.ts`,
-      cwd: '..',
-      url: `http://localhost:${PORT}/api/health`,
+      // Listed first: the simulators must be listening before the app starts,
+      // so its startup discovery scan sees them. The app's command also waits,
+      // which keeps the order even if the servers are launched together.
+      command: 'node fake-echo-server.ts',
+      cwd: '.',
+      url: 'http://127.0.0.1:26100/health',
       reuseExistingServer: false,
-      timeout: 180_000,
+      timeout: 30_000,
       stdout: 'ignore',
       stderr: 'pipe',
     },
     {
-      command: 'node fake-echo-server.ts',
-      cwd: '.',
-      port: 26101,
+      command: `npm run build && rm -f data/e2e.db* && node e2e/wait-for-ports.ts 26101 26102 26103 26104 && ${E2E_ENV} NODE_ENV=production node apps/api/src/server.ts`,
+      cwd: '..',
+      url: `http://localhost:${PORT}/api/health`,
       reuseExistingServer: false,
-      timeout: 30_000,
+      timeout: 180_000,
       stdout: 'ignore',
       stderr: 'pipe',
     },

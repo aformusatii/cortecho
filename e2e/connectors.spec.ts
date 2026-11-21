@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createDevice, deleteDevice, FAKE_ECHO_PORTS, saveScreenshot } from './helpers.ts';
+import { completeSetup, createDevice, deleteDevice, FAKE_ECHO_PORTS, saveScreenshot } from './helpers.ts';
 
 const OPEN_MCP = 'http://127.0.0.1:26201/mcp';
 const AUTH_MCP = 'http://127.0.0.1:26200/mcp';
@@ -49,6 +49,10 @@ async function openAdd(
 }
 
 test.describe('Connectors', () => {
+  test.beforeEach(async ({ request }) => {
+    await completeSetup(request);
+  });
+
   test('adds a connector, lists tools, tries one and limits it per Echo', async ({
     page,
     request,

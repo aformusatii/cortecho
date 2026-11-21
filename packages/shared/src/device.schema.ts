@@ -50,6 +50,54 @@ export const deviceUpdateSchema = z.object({
 });
 export type DeviceUpdate = z.infer<typeof deviceUpdateSchema>;
 
+/** POST /api/devices/probe: what answers at this address, and what key state it is in. */
+export const deviceProbeSchema = z.object({
+  host: hostField,
+  port: portField.default(26053),
+  /** A pasted key, to check it against an Echo someone else secured. */
+  apiKey: apiKeyField.optional(),
+});
+export type DeviceProbe = z.infer<typeof deviceProbeSchema>;
+
+/** POST /api/devices/adopt: connect, secure with a generated key, and add the Echo. */
+export const deviceAdoptSchema = z.object({
+  host: hostField,
+  port: portField.default(26053),
+  /** Absent: the Echo's friendly name, made unique. */
+  name: nameField.optional(),
+  kind: z.enum(DEVICE_KINDS).default('echo'),
+  /** Only for an Echo that already has a key (set by another app): use this one instead of SetKey. */
+  apiKey: apiKeyField.optional(),
+});
+export type DeviceAdopt = z.infer<typeof deviceAdoptSchema>;
+
+/**
+ * 'none'   the Echo has no key (plaintext works, or the zero-PSK handshake does)
+ * 'set'    the Echo has a key and we could not prove it is the one we were given
+ * 'matches' the given key completed the Noise handshake
+ */
+export const ECHO_KEY_STATES = ['none', 'set', 'matches'] as const;
+export type EchoKeyState = (typeof ECHO_KEY_STATES)[number];
+
+export type EchoProbeFailureCode = 'unreachable' | 'not-esphome' | 'timeout';
+
+export type EchoProbeSuccess = {
+  reachable: true;
+  /** null = the feature flags were needed but are unreadable without the Echo's key. */
+  isVoiceAssistant: boolean | null;
+  nodeName: string | null;
+  /** 12 lower-case hex (the Echo's identity, spec §1.2 S3). */
+  mac: string | null;
+  friendlyName: string | null;
+  model: string | null;
+  keyState: EchoKeyState;
+};
+
+export type EchoProbeFailure = { reachable: false; code: EchoProbeFailureCode };
+
+/** The result of a probe never contains the key it was given. */
+export type EchoProbeResult = EchoProbeSuccess | EchoProbeFailure;
+
 export const deviceSettingsPatchSchema = z.object({
   /** The settings version the form was loaded with; a stale value gets 409. */
   version: z.number().int().min(0),
@@ -69,6 +117,8 @@ export type DeviceStatus = {
   prompt: string;
   /** hassmic's node name, learned at the first connect. */
   nodeName: string | null;
+  /** hassmic's DeviceInfo MAC as 12 lower-case hex, learned at the first connect. */
+  mac: string | null;
   hasKey: boolean;
   /** 'disabled' when the device is disabled. */
   state: EchoConnectionState;
@@ -93,4 +143,14 @@ export type DeviceSettingsDocument = {
   version: number;
   overrides: Record<string, unknown>;
   effective: Record<string, unknown>;
+};
+
+/** POST /api/devices/:id/test-sound (spec §7.5): the chime the Echo was given. */
+export type TestSoundResult = {
+  /** The Echo fetched the chime from the reply endpoint. */
+  downloaded: boolean;
+  /** The Echo sent AnnounceFinished{success:true}. */
+  finished: boolean;
+  /** The URL the Echo was given (a current reply id). */
+  url: string;
 };

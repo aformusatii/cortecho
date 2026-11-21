@@ -134,6 +134,8 @@ export type EchoInfo = {
   /** VoiceAssistantFeature flags: announce, start conversation, … */
   supportsAnnounce: boolean;
   supportsFollowUp: boolean;
+  /** The Echo has no key yet (DeviceInfoResponse.api_encryption_provisionable). */
+  provisionable: boolean;
 };
 
 /**
@@ -141,6 +143,8 @@ export type EchoInfo = {
  * `unexpected-device`: the address now reports another node name.
  * `duplicate-node-name`: two connected Echos report the same name, so hassmic's
  * arbitration cannot tell them apart.
+ * `reply-address-missing`: production runs without `network.replyBaseUrl`, so
+ * the Echo cannot download its answers.
  */
 export const ECHO_PROBLEMS = [
   'encryption-required',
@@ -148,6 +152,7 @@ export const ECHO_PROBLEMS = [
   'key-not-set',
   'unexpected-device',
   'duplicate-node-name',
+  'reply-address-missing',
 ] as const;
 export type EchoProblem = (typeof ECHO_PROBLEMS)[number];
 

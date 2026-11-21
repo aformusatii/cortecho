@@ -27,8 +27,8 @@ has no authentication).
 | `PORT` | `3000` | HTTP port inside the container |
 | `DATABASE_PATH` | `./data/app.db` | SQLite file (relative to the repository root) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `silent` |
-| `REPLY_AUDIO_BASE_URL` | *(empty)* | How the Echo reaches this app on the LAN, e.g. `http://192.168.1.10:3000`. Empty falls back to the address of the Echo link plus `PORT`, which is wrong inside Docker |
 | `REPLY_AUDIO_TTL_MS` | `120000` | How long a reply URL stays valid |
+| `DISCOVERY_EXTRA_TARGETS` | *(none)* | Comma-separated `host:port` additions to the network scan (an Echo on another subnet, tests). The scan only connects to private IPv4 addresses |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible server (proxies, local models). The key and models stay in Settings; the server must implement the Responses API, streaming speech and audio transcription |
 | `DEBUG_AUDIO_DIR` | *(unset)* | Save each utterance as a WAV (your voice!). Debug only |
 | `DEBUG_AUDIO_KEEP` | `20` | Number of recordings kept |
@@ -69,13 +69,20 @@ a warning at start lists any of these variables that are still set. Remove
 them from `cortecho.env` after the first successful start.
 
 - The Echo: `ECHO_HOST`, `ECHO_PORT`, `ECHO_API_KEY` create one device named
-  "Echo". Later Echoes are added in **Echos → Add Echo**. `echo-set-key` still
-  reads these variables for its own command line.
+  "Echo". On a new install, add it in **Setup** (or from its **Discovered**
+  card) instead: the wizard sets the key itself and nothing has to be edited.
+  Later Echoes are added the same way; `echo-set-key` stays a CLI fallback and
+  still reads these variables for its own command line.
 - The OpenAI key and every behaviour setting: see the table below (its **Env**
   column). `SystemPrompt.md` in the project root becomes the household prompt.
 - `TZ` is special: it sets the container clock on every start **and** seeds
   `assistant.timeZone` once. Changing `TZ` later changes the container clock
   but not the assistant's time zone; change that in **Settings**.
+- **Upgrading an older install:** `REPLY_AUDIO_BASE_URL` used to be read at
+  every start. On the first start after the upgrade it is copied once into
+  `network.replyBaseUrl` (only if that setting was never saved), then it is
+  ignored like the variables above. An invalid value is not copied; the
+  warning at start and **Settings → Network** point at it.
 
 ## 3. Settings (SQLite)
 
@@ -129,6 +136,7 @@ per-Echo list edited on the Echo's **Connectors** tab (hidden from Tuning).
 | `vad.maxUtteranceMs` | Longest request | `15000` | `VAD_MAX_UTTERANCE_MS` | no |
 | `reply.prebufferMs` | Reply pre-buffer | `400` | `REPLY_PREBUFFER_MS` | yes |
 | `pipeline.turnDeadlineMs` | Turn deadline | `24000` | `TURN_DEADLINE_MS` | no |
+| `network.replyBaseUrl` | Reply address | (empty) | `REPLY_AUDIO_BASE_URL` | no |
 | `openai.timeoutMs` | OpenAI timeout | `20000` | `OPENAI_TIMEOUT_MS` | no |
 | `openai.apiKey` | OpenAI API key | (none) | `OPENAI_API_KEY` | no |
 | `echo.duplicateWakeWindowMs` | Duplicate wake window | `2000` | — | no |
@@ -156,6 +164,11 @@ Details that matter:
 - **`tts.model`** defaults to `gpt-4o-mini-tts`, which OpenAI shuts down on
   **2027-01-06**. Set a supported speech model before then, or use the
   Realtime API work on the roadmap.
+- **`network.replyBaseUrl`** is how the Echos reach this app on the LAN
+  (`http://192.168.1.10:3000`). It is empty on purpose in development, where
+  the link's local address is used. In Docker set it once under
+  **Settings → Network**: the Echo downloads every answer from it, so a
+  container-internal address plays nothing. A public URL is refused.
 
 ## 4. Docker variables
 

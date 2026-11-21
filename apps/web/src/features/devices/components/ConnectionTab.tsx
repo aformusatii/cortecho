@@ -9,6 +9,8 @@ import { Switch } from '@/components/ui/switch.tsx';
 import { isApiError } from '@/lib/api-client.ts';
 import { useAcceptDevice, useUpdateDevice } from '../api/devices.mutations.ts';
 
+const REMOVE_KEY_URL = 'https://github.com/aformusatii/cortecho/blob/main/docs/echo-setup.md#the-api-key';
+
 type Form = {
   name: string;
   kind: DeviceKind;
@@ -183,50 +185,72 @@ export function ConnectionTab({ device }: { device: DeviceStatus }) {
             </p>
           ) : (
             <p id="device-host-help" className="text-xs text-muted-foreground">
-              A private LAN address or 127.0.0.1. hassmic listens on 26053 by default.
+              A private LAN address or 127.0.0.1.
             </p>
           )}
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="device-key">API key</Label>
-          <Input
-            id="device-key"
-            type="password"
-            autoComplete="new-password"
-            placeholder={device.hasKey ? 'Stored: enter a new key to replace it' : 'No key: plaintext link'}
-            value={form.apiKey}
-            disabled={removeKey}
-            aria-invalid={Boolean(errors.apiKey) || undefined}
-            aria-describedby={errors.apiKey ? 'device-key-error' : 'device-key-help'}
-            onChange={(event) => set('apiKey', event.target.value)}
-          />
-          {errors.apiKey && (
-            <p id="device-key-error" role="alert" className="text-sm text-destructive">
-              {errors.apiKey}
+        <details className="rounded-lg border px-3 py-2">
+          <summary className="min-h-11 cursor-pointer text-sm font-medium">Advanced</summary>
+          <div className="mt-2 space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Paste a key only if this Echo was secured by another app.
             </p>
-          )}
-          <p id="device-key-help" className="text-xs text-muted-foreground">
-            The key is never shown again, only whether one is stored. Empty keeps the stored key.
-          </p>
-          {device.hasKey &&
-            (removeKey ? (
-              <p className="text-sm font-medium text-destructive">
-                The key will be removed (plaintext link).{' '}
-                <button
-                  type="button"
-                  className="underline underline-offset-2"
-                  onClick={() => setRemoveKey(false)}
-                >
-                  Keep it
-                </button>
+            <div className="space-y-1.5">
+              <Label htmlFor="device-key">Key</Label>
+              <Input
+                id="device-key"
+                type="password"
+                autoComplete="new-password"
+                placeholder={
+                  device.hasKey ? 'Stored: enter a new key to replace it' : 'No key: plaintext link'
+                }
+                value={form.apiKey}
+                disabled={removeKey}
+                aria-invalid={Boolean(errors.apiKey) || undefined}
+                aria-describedby={errors.apiKey ? 'device-key-error' : 'device-key-help'}
+                onChange={(event) => set('apiKey', event.target.value)}
+              />
+              {errors.apiKey && (
+                <p id="device-key-error" role="alert" className="text-sm text-destructive">
+                  {errors.apiKey}
+                </p>
+              )}
+              <p id="device-key-help" className="text-xs text-muted-foreground">
+                The key is never shown again, only whether one is stored. Empty keeps the stored key.
               </p>
-            ) : (
-              <Button type="button" size="sm" variant="outline" onClick={() => setRemoveKey(true)}>
-                Remove key
-              </Button>
-            ))}
-        </div>
+              {device.hasKey &&
+                (removeKey ? (
+                  <p className="text-sm font-medium text-destructive">
+                    The key will be forgotten in Cortecho (plaintext link).{' '}
+                    <button
+                      type="button"
+                      className="underline underline-offset-2"
+                      onClick={() => setRemoveKey(false)}
+                    >
+                      Keep it
+                    </button>
+                  </p>
+                ) : (
+                  <Button type="button" size="sm" variant="outline" onClick={() => setRemoveKey(true)}>
+                    Forget the key in Cortecho
+                  </Button>
+                ))}
+              <p className="text-xs text-muted-foreground">
+                The Echo keeps its key. To remove it from the Echo, see{' '}
+                <a
+                  href={REMOVE_KEY_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline underline-offset-2"
+                >
+                  Echo setup
+                </a>
+                .
+              </p>
+            </div>
+          </div>
+        </details>
 
         <div className="flex items-center justify-between gap-4 border-t pt-3">
           <div>

@@ -27,17 +27,41 @@ export const devices = sqliteTable(
     overrides: text('overrides').notNull().default('{}'),
     /** hassmic's node name, learned at the first connect; a different name later = another device. */
     nodeName: text('node_name'),
+    /**
+     * The Echo's MAC as 12 lower-case hex, learned from DeviceInfo at the first
+     * connect. Identity across DHCP changes (spec §1.2 S3); a different MAC on a
+     * row that has one is the `unexpected-device` problem. Unique when not null
+     * (SQLite allows many NULLs: rows from before this column).
+     */
+    mac: text('mac'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
   },
   (table) => [
     uniqueIndex('devices_name_idx').on(table.name),
     uniqueIndex('devices_host_port_idx').on(table.host, table.port),
+    uniqueIndex('devices_mac_idx').on(table.mac),
   ],
 );
 
 export type DeviceRow = typeof devices.$inferSelect;
 export type NewDeviceRow = typeof devices.$inferInsert;
+
+/** MACs the owner chose to hide from the Discovered section (spec §5.3). */
+export const discoveryIgnored = sqliteTable('discovery_ignored', {
+  mac: text('mac').primaryKey(),
+  ignoredAt: text('ignored_at').notNull(),
+});
+
+/**
+ * Small application state that is not a behaviour setting, so not in the
+ * settings registry: today only `onboarding.completedAt` (spec §8.3).
+ */
+export const appState = sqliteTable('app_state', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
 
 /**
  * One row per voice turn, /api/ask or /api/say request: what was heard,
@@ -107,6 +131,13 @@ export const settingsChanges = sqliteTable(
     oldValue: text('old_value'),
     newValue: text('new_value'),
     version: integer('version').notNull(),
+    /**
+     * Who wrote it: an owner edit through the API/UI (`owner`), the one-time
+     * environment import (`import`) or the reply-address upgrade copy
+     * (`upgrade`). Only an owner edit says the owner meant the value; the
+     * onboarding's "Your home" skip reads that distinction.
+     */
+    source: text('source').notNull().default('owner'),
   },
   (table) => [index('settings_changes_scope_idx').on(table.scope, table.id)],
 );

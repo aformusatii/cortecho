@@ -56,6 +56,31 @@ describe('TOOLS_FILE', () => {
   });
 });
 
+describe('DISCOVERY_EXTRA_TARGETS', () => {
+  it('parses comma-separated host:port entries', () => {
+    process.env.DISCOVERY_EXTRA_TARGETS = '192.168.1.50:26053, 10.0.0.5:3000';
+    try {
+      expect(loadConfig().discovery.extraTargets).toEqual([
+        { host: '192.168.1.50', port: 26053 },
+        { host: '10.0.0.5', port: 3000 },
+      ]);
+    } finally {
+      delete process.env.DISCOVERY_EXTRA_TARGETS;
+    }
+  });
+
+  it('refuses an entry that is not host:port', () => {
+    for (const value of ['nope', '1.2.3.4:', '1.2.3.4:99999', ':26053']) {
+      process.env.DISCOVERY_EXTRA_TARGETS = value;
+      try {
+        expect(() => loadConfig()).toThrow(/DISCOVERY_EXTRA_TARGETS/);
+      } finally {
+        delete process.env.DISCOVERY_EXTRA_TARGETS;
+      }
+    }
+  });
+});
+
 /**
  * The docs and the code must not drift apart. The brief's example of such a
  * drift: OPENAI_BASE_URL existed in config.ts but was in no example or doc.

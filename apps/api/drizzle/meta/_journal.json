@@ -36,6 +36,20 @@
       "when": 1794949849158,
       "tag": "0004_first_redwing",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1795267935148,
+      "tag": "0005_lying_apocalypse",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1795273704490,
+      "tag": "0006_minor_onslaught",
+      "breakpoints": true
     }
   ]
 }

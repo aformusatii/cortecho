@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isPrivateIpv4 } from './ip.ts';
 
 // ---------------------------------------------------------------------------
 // The single description of every setting: the API validates with it and the
@@ -17,6 +18,7 @@ export const SETTING_SECTIONS = [
   'conversation',
   'listening',
   'timing',
+  'network',
   'advanced',
 ] as const;
 export type SectionId = (typeof SETTING_SECTIONS)[number];
@@ -29,6 +31,7 @@ export const SETTINGS_SECTION_LABELS: Record<SectionId, string> = {
   conversation: 'Conversation',
   listening: 'Listening',
   timing: 'Timing',
+  network: 'Network',
   advanced: 'Advanced',
 };
 
@@ -107,6 +110,51 @@ const ttsVoices = [
 ] as const;
 
 const localeOptions = ['en-GB', 'en-US', 'ro-MD', 'ro-RO', 'ru-RU', 'de-DE', 'fr-FR'] as const;
+
+/**
+ * How the Echos reach this app on the LAN (spec §8.1). Empty is allowed (the
+ * Echo link's local address is the fallback); otherwise an http(s) URL with no
+ * path, query or fragment. A public IPv4 literal is refused: a reply URL must
+ * never point outside the local network. A host name is accepted (it may be a
+ * LAN-only name the owner set up).
+ */
+const replyBaseUrlSchema = z
+  .string()
+  .trim()
+  .max(300, 'Use at most 300 characters.')
+  .transform((value, ctx) => {
+    const trimmed = value.replace(/\/+$/, '');
+    if (trimmed === '') return '';
+    let url: URL;
+    try {
+      url = new URL(trimmed);
+    } catch {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Use a full address, for example http://192.168.1.10:3000.',
+      });
+      return z.NEVER;
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Use a full address, for example http://192.168.1.10:3000.',
+      });
+      return z.NEVER;
+    }
+    if ((url.pathname !== '' && url.pathname !== '/') || url.search !== '' || url.hash !== '') {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Use only the address, with no path, for example http://192.168.1.10:3000.',
+      });
+      return z.NEVER;
+    }
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(url.hostname) && !isPrivateIpv4(url.hostname)) {
+      ctx.addIssue({ code: 'custom', message: "Use this computer's address on your network." });
+      return z.NEVER;
+    }
+    return trimmed;
+  });
 
 const settings: readonly SettingDescriptor[] = [
   // --- Assistant ------------------------------------------------------------
@@ -629,6 +677,19 @@ const settings: readonly SettingDescriptor[] = [
     applies: 'next-turn',
     env: 'TURN_DEADLINE_MS',
   },
+  // --- Network --------------------------------------------------------------
+  {
+    key: 'network.replyBaseUrl',
+    section: 'network',
+    label: 'Reply address',
+    help: 'How your Echos reach Cortecho on your network, for example http://192.168.1.10:3000. Every spoken answer is downloaded from here, so it must be a LAN address, not a public URL.',
+    schema: replyBaseUrlSchema,
+    default: '',
+    control: 'text',
+    perEcho: false,
+    applies: 'next-turn',
+    env: 'REPLY_AUDIO_BASE_URL',
+  },
   // --- Advanced -------------------------------------------------------------
   {
     key: 'openai.timeoutMs',
@@ -829,6 +890,7 @@ export type Settings = {
   };
   reply: { prebufferMs: number };
   pipeline: { turnDeadlineMs: number };
+  network: { replyBaseUrl: string };
   openai: { timeoutMs: number; apiKey: string | null };
   echo: {
     duplicateWakeWindowMs: number;
@@ -894,6 +956,7 @@ export function buildSettings(values: Readonly<Record<string, unknown>>): Settin
     },
     reply: { prebufferMs: get('reply.prebufferMs') },
     pipeline: { turnDeadlineMs: get('pipeline.turnDeadlineMs') },
+    network: { replyBaseUrl: get('network.replyBaseUrl') },
     openai: { timeoutMs: get('openai.timeoutMs'), apiKey: get('openai.apiKey') },
     echo: {
       duplicateWakeWindowMs: get('echo.duplicateWakeWindowMs'),
