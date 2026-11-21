@@ -1,10 +1,17 @@
 import type { SettingsChange } from '@cortecho/shared';
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '../../db/client.ts';
 import { devices, settings, settingsChanges, settingsMeta } from '../../db/schema.ts';
 
 /** Older history rows are deleted so the table never grows without bound. */
 const KEEP_SETTINGS_CHANGES = 500;
+
+/**
+ * Who wrote a history row. Only `owner` is an edit the owner made through the
+ * API or the UI; `import` is the one-time environment import and `upgrade` the
+ * reply-address copy, neither of which is a decision the wizard may skip on.
+ */
+export type SettingsChangeSource = 'owner' | 'import' | 'upgrade';
 
 export type SettingsDiff = {
   key: string;
@@ -57,7 +64,12 @@ export function createSettingsRepository(db: Db) {
       {
         scope = 'global',
         device,
-      }: { scope?: string; device?: { id: number; overrides: Record<string, unknown> } } = {},
+        source = 'owner',
+      }: {
+        scope?: string;
+        device?: { id: number; overrides: Record<string, unknown> };
+        source?: SettingsChangeSource;
+      } = {},
     ): void {
       db.transaction((tx) => {
         for (const change of diff) {
@@ -82,6 +94,7 @@ export function createSettingsRepository(db: Db) {
               oldValue: change.oldValue === null ? null : JSON.stringify(change.oldValue),
               newValue: change.newValue === null ? null : JSON.stringify(change.newValue),
               version,
+              source,
             })
             .run();
         }
@@ -100,6 +113,22 @@ export function createSettingsRepository(db: Db) {
           sql`delete from settings_changes where id <= (select max(id) from settings_changes) - ${KEEP_SETTINGS_CHANGES}`,
         );
       });
+    },
+
+    /**
+     * Whether the owner ever changed one of these keys (any scope). Imported
+     * values do not count: the wizard's "already set" skip is about a decision
+     * the owner made, not about a value the environment seeded.
+     */
+    hasOwnerChangeFor(keys: readonly string[]): boolean {
+      if (keys.length === 0) return false;
+      const row = db
+        .select({ id: settingsChanges.id })
+        .from(settingsChanges)
+        .where(and(inArray(settingsChanges.key, [...keys]), eq(settingsChanges.source, 'owner')))
+        .limit(1)
+        .get();
+      return row !== undefined;
     },
 
     history(limit: number, scope?: string): SettingsChange[] {

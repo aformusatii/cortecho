@@ -1,11 +1,23 @@
 import { expect, test } from '@playwright/test';
-import { createDevice, deleteDevice, FAKE_ECHO_PORTS, saveScreenshot, waitForStatus } from './helpers.ts';
+import {
+  completeSetup,
+  createDevice,
+  deleteDevice,
+  FAKE_ECHO_PORTS,
+  saveScreenshot,
+  waitForStatus,
+} from './helpers.ts';
 
 // The e2e server runs without a real Echo and without OPENAI_API_KEY (see
 // playwright.config.ts). Two FakeEchos listen on localhost for the device
 // flows; one device below points at a refused port to show "Disconnected".
 
 test.describe('Status page', () => {
+  // This install is set up: `/` must not send anyone to the onboarding.
+  test.beforeEach(async ({ request }) => {
+    await completeSetup(request);
+  });
+
   test('shows the configured Echo, pipeline and OpenAI state', async ({ page, request }, testInfo) => {
     const device = await createDevice(request, { name: 'Kitchen', port: 9 });
     try {

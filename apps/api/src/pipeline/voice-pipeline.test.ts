@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { FakeEcho, syntheticSpeech } from '../esphome/fake-echo.ts';
 import { MSG } from '../esphome/messages.ts';
-import { createTestRuntime, waitUntil } from '../test-support.ts';
+import { createTestRuntime, TEST_REPLY_BASE_URL, waitUntil } from '../test-support.ts';
 import { expectsAnswer, followUpVad } from './voice-pipeline.ts';
 
 // End-to-end against a fake hassmic (ESPHome mode) on localhost: real TCP,
@@ -86,6 +86,7 @@ describe('connecting', () => {
       name: 'fake-echo',
       supportsAnnounce: true,
       supportsFollowUp: true,
+      provisionable: true,
     });
     const types = echo.received.map((m) => m.type);
     expect(types.slice(0, 4)).toEqual([
@@ -152,7 +153,7 @@ describe('voice turns', () => {
     expect(data.stt_end).toEqual({ text: 'what time is it' });
     expect(data.intent_end).toEqual({ continue_conversation: '0' });
     expect(data.tts_start).toEqual({ text: 'It is noon.' });
-    expect(data.tts_end?.url).toMatch(/^http:\/\/voice-agent\.test\/api\/reply-audio\/[\w-]{22}\.wav$/);
+    expect(data.tts_end?.url).toMatch(/^http:\/\/127\.0\.0\.1:3000\/api\/reply-audio\/[\w-]{22}\.wav$/);
     expect(echo.played[0]).toMatchObject({ kind: 'reply', format: 'wav', sampleRate: 24000, bytes: 24000 });
 
     expect(ctx.pipeline.lastTurn).toMatchObject({
@@ -169,6 +170,28 @@ describe('voice turns', () => {
     // The reply URL stops working once the turn is over.
     const stale = await ctx.app.request(new URL(data.tts_end?.url ?? '').pathname);
     expect(stale.status).toBe(404);
+  });
+
+  it('builds reply URLs from the network.replyBaseUrl setting, falling back to the link address', async () => {
+    await setup();
+    await connected();
+    const firstId = ctx.pipeline.lastTurn?.id ?? 0;
+
+    ctx.settings.apply({ 'network.replyBaseUrl': `${TEST_REPLY_BASE_URL}/` }, ctx.settings.version);
+    await echo.runPipeline(syntheticSpeech());
+    await waitUntil(() => ctx.pipeline.lastTurn !== null && ctx.pipeline.lastTurn.id !== firstId);
+    const withSetting = Object.fromEntries(echo.events.map((e) => [e.type, e.data]));
+    expect(withSetting.tts_end?.url).toMatch(
+      /^http:\/\/voice-agent\.test\/api\/reply-audio\/[\w-]{22}\.wav$/,
+    );
+    expect(echo.played[0]).toMatchObject({ kind: 'reply', format: 'wav' });
+
+    const secondId = ctx.pipeline.lastTurn?.id ?? 0;
+    ctx.settings.apply({ 'network.replyBaseUrl': '' }, ctx.settings.version);
+    await echo.runPipeline(syntheticSpeech());
+    await waitUntil(() => ctx.pipeline.lastTurn !== null && ctx.pipeline.lastTurn.id !== secondId);
+    const fallback = echo.events.filter((e) => e.type === 'tts_end').at(-1);
+    expect(fallback?.data.url).toMatch(/^http:\/\/127\.0\.0\.1:3000\/api\/reply-audio\/[\w-]{22}\.wav$/);
   });
 
   it('transcribes during the closing pause and uses that result', async () => {
@@ -627,6 +650,17 @@ describe('announcements (/say)', () => {
     ]);
     expect(echo.played[0]).toMatchObject({ kind: 'announcement', format: 'wav' });
     expect(echo.events).toEqual([]); // no pipeline events for an announcement
+  });
+
+  it('announces from the reply address setting', async () => {
+    await setup();
+    await connected();
+    ctx.settings.apply({ 'network.replyBaseUrl': TEST_REPLY_BASE_URL }, ctx.settings.version);
+    await ctx.pipeline.say('Hello');
+    expect(echo.announcements[0]?.mediaId).toMatch(
+      /^http:\/\/voice-agent\.test\/api\/reply-audio\/[\w-]{22}\.wav$/,
+    );
+    expect(echo.announcements[0]?.success).toBe(true);
   });
 
   it('reports an announcement the Echo did not play', async () => {

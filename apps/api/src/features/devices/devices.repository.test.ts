@@ -29,7 +29,7 @@ const input = {
 describe('devices repository', () => {
   it('creates, lists, edits and deletes a device', () => {
     const created = ctx.devices.create(input);
-    expect(created).toMatchObject({ id: 1, name: 'Kitchen', overrides: {}, nodeName: null });
+    expect(created).toMatchObject({ id: 1, name: 'Kitchen', overrides: {}, nodeName: null, mac: null });
     expect(ctx.devices.count()).toBe(1);
     expect(ctx.devices.list()).toHaveLength(1);
 
@@ -40,10 +40,25 @@ describe('devices repository', () => {
       'tts.voice': 'cedar',
     });
     expect(ctx.devices.setNodeName(created.id, 'kitchen-echo')?.nodeName).toBe('kitchen-echo');
+    expect(ctx.devices.setMac(created.id, '020000000001')?.mac).toBe('020000000001');
+    expect(ctx.devices.findByMac('020000000001')?.id).toBe(created.id);
+    expect(ctx.devices.findByHostPort('192.168.1.50', 26053)?.id).toBe(created.id);
+    expect(ctx.devices.findByMac('020000000002')).toBeNull();
 
     expect(ctx.devices.remove(created.id)).toBe(true);
     expect(ctx.devices.get(created.id)).toBeNull();
     expect(ctx.devices.count()).toBe(0);
+  });
+
+  it('keeps the MAC unique when set, and allows many rows without one', () => {
+    const first = ctx.devices.create(input);
+    const second = ctx.devices.create({ ...input, name: 'Bedroom', port: 26054 });
+    expect(second.mac).toBeNull(); // many NULL MACs are fine (rows from before the column)
+    expect(ctx.devices.setMac(first.id, '020000000001')?.mac).toBe('020000000001');
+    expect(() => ctx.devices.setMac(second.id, '020000000001')).toThrowError(
+      expect.objectContaining({ field: 'mac' }),
+    );
+    expect(ctx.devices.setMac(second.id, null)?.mac).toBeNull();
   });
 
   it('reports a duplicate name and a duplicate host:port', () => {
@@ -57,6 +72,12 @@ describe('devices repository', () => {
       expect(error).toBeInstanceOf(DuplicateDeviceError);
       expect((error as DuplicateDeviceError).field).toBe('host');
     }
+    expect(() =>
+      ctx.devices.create({ ...input, name: 'Bedroom', host: '10.0.0.3', mac: '020000000001' }),
+    ).not.toThrow();
+    expect(() =>
+      ctx.devices.create({ ...input, name: 'Hall', host: '10.0.0.4', mac: '020000000001' }),
+    ).toThrowError(expect.objectContaining({ field: 'mac' }));
   });
 
   it('keeps turns when a device is deleted, with device_id null', () => {

@@ -12,7 +12,7 @@ Run everything from the repository root.
 | `npm install` | Install all workspaces |
 | `npm run dev` | API on `:3000` (`node --watch`) + Vite on `:5173`. With no device, no ESPHome client starts |
 | `npm run fake-echo -- q.wav [--port 26099] [--out a.wav] [--key b64]` | Fake hassmic on localhost: plays a WAV as a wake-word run, downloads and saves the spoken answer |
-| `npm run echo-set-key -- --host 192.168.1.50` | **Changes the Echo**: gives it an API key, once. Ask before running it |
+| `npm run echo-set-key -- --host 192.168.1.50` | **Changes the Echo**: gives it an API key, once. CLI fallback; the UI adopts Echos itself. Ask before running it |
 | `npm run build` / `npm start` | Production build / server (API + SPA on `:3000`) |
 | `npm run typecheck` | `tsc --noEmit` for every workspace and `e2e/` |
 | `npm run lint` | Biome lint + format check (`npm run format` fixes) |
@@ -34,17 +34,20 @@ apps/api/src/
   server.ts               entry: config → db → settings import → devices → tools → services → HTTP
   app.ts                  createApp({ db, voice }): middleware, /health, routes, errors
   env.ts / config.ts      environment-only configuration
-  esphome/                protobuf, messages, framing, Noise, time zone, client, FakeEcho
+  esphome/                protobuf, messages, framing, Noise, time zone, client, FakeEcho,
+                          adopt.ts (probe + SetKey for the setup wizard)
   vad/                    energy VAD: ends requests, as Home Assistant's VAD does
   features/settings/      SQLite settings, overrides, validation, one-time import, HTTP routes
-  features/devices/       SQLite devices, one client + pipeline per Echo, HTTP routes
+  features/devices/       SQLite devices, one client + pipeline per Echo, adopt/secure, HTTP routes
+  features/discovery/     mDNS and subnet scan of Echos, the ignore list, HTTP routes
+  features/setup/         onboarding state and the OpenAI check, HTTP routes
   features/turns/         SQLite turn history (newest 1000)
   features/voice/         /api/turns, /api/say, /api/ask, /api/reply-audio
   pipeline/               services, OpenAI, agent, sessions, prompt layers, turn state machine
   tools/                  registry + one file per tool plugin
   scripts/                fake-echo, echo-set-key, doctor
 apps/api/drizzle/         generated SQL migrations (committed, never edited by hand)
-apps/web/src/             routes, features/{status,settings,devices,voice}, ui
+apps/web/src/             routes, features/{status,settings,devices,voice,setup}, ui
 e2e/                      Playwright specs, helpers, FakeEcho server
 docs/                     user and contributor documentation
 ```

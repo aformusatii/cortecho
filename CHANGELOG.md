@@ -38,6 +38,29 @@ All notable changes to Cortecho are documented here. The format follows
 
 ### Added
 
+- **Setup wizard: add an Echo from the UI, like Home Assistant.** Cortecho
+  discovers Echos on the network (mDNS, and a subnet scan that works on
+  Compose's default bridge), secures the link with a key it generates and
+  never shows, plays a sound so the owner can identify the device, and asks
+  which room it is in. A permanent **Setup** item in the nav, **Discovered**
+  cards on the Echos page, a first-launch onboarding (home, OpenAI, first
+  Echo), a "not set up yet" banner and **Fix** links on device problems.
+  Adding the first Echo finishes onboarding; the CLI `echo-set-key` stays a
+  fallback.
+- **`network.replyBaseUrl` ("Reply address")** is a setting under
+  **Settings → Network**, with a **Play a test sound** button. An existing
+  deployment copies `REPLY_AUDIO_BASE_URL` into it once, on the first start
+  after the upgrade. Production no longer refuses to start without it: the
+  affected Echo shows `reply-address-missing` and the wizard fixes it.
+- `DISCOVERY_EXTRA_TARGETS` for Echos on another subnet (and tests).
+- Echos learn their MAC address from `DeviceInfo`; discovery uses it as the
+  identity, so a changed DHCP address offers "Use the new address" instead of
+  looking like a new device.
+- New routes: `POST /api/devices/probe`, `POST /api/devices/adopt`,
+  `POST /api/devices/:id/secure`, `POST /api/devices/:id/test-sound`,
+  `GET/POST/DELETE /api/discovery*` and `GET/POST/DELETE /api/setup*`.
+- New tables `app_state` (onboarding) and `discovery_ignored` (ignored
+  Echos), and a nullable unique `devices.mac`.
 - **MCP connectors**: connect Gmail, Google Calendar, Home Assistant or any MCP
   server in Settings → Connectors. Streamable HTTP with an SSE fallback, header
   auth and OAuth 2.1 (PKCE, discovery, pre-registered clients, DCR), encrypted
@@ -49,6 +72,21 @@ All notable changes to Cortecho are documented here. The format follows
 - `CORTECHO_SECRET_KEY`, `PUBLIC_BASE_URL`, `MCP_ALLOWED_ORIGINS` and
   `MCP_CIMD_ENABLED`; `docs/connectors.md`.
 - Logger redaction for tokens, OAuth codes and secret-named fields.
+
+### Changed
+
+- **No environment file needs editing on a new install.**
+  `docker compose up -d` works with the compose file as downloaded, and the
+  setup wizard sets the Echo, the OpenAI key and the reply address in the UI.
+  `ECHO_*`, `OPENAI_API_KEY` and `REPLY_AUDIO_BASE_URL` moved from
+  `cortecho.env.example` to a commented **"Upgrading an older install"** block
+  (still imported once); `DISCOVERY_EXTRA_TARGETS` is documented there and in
+  [configuration](docs/configuration.md).
+- The Echos page no longer lists CLI steps or asks for an address, port and
+  key in an Add dialog: an Echo is added through the wizard, and the
+  Connection tab's key field is under **Advanced** ("Paste a key only if this
+  Echo was secured by another app"). **Remove key** is now **Forget the key in
+  Cortecho** (the Echo keeps its key).
 
 ## [0.1.0] - 2026-11-16
 

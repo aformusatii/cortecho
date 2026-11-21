@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as SetupRouteImport } from './routes/setup'
 import { Route as EchosIndexRouteImport } from './routes/echos.index'
 import { Route as EchosIdRouteImport } from './routes/echos.$id'
 
@@ -22,6 +23,11 @@ const IndexRoute = IndexRouteImport.update({
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EchosIndexRoute = EchosIndexRouteImport.update({
@@ -38,12 +44,14 @@ const EchosIdRoute = EchosIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRoute
+  '/setup': typeof SetupRoute
   '/echos/$id': typeof EchosIdRoute
   '/echos/': typeof EchosIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRoute
+  '/setup': typeof SetupRoute
   '/echos/$id': typeof EchosIdRoute
   '/echos': typeof EchosIndexRoute
 }
@@ -51,20 +59,22 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/settings': typeof SettingsRoute
+  '/setup': typeof SetupRoute
   '/echos/$id': typeof EchosIdRoute
   '/echos/': typeof EchosIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/settings' | '/echos/$id' | '/echos/'
+  fullPaths: '/' | '/settings' | '/setup' | '/echos/$id' | '/echos/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/settings' | '/echos/$id' | '/echos'
-  id: '__root__' | '/' | '/settings' | '/echos/$id' | '/echos/'
+  to: '/' | '/settings' | '/setup' | '/echos/$id' | '/echos'
+  id: '__root__' | '/' | '/settings' | '/setup' | '/echos/$id' | '/echos/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SettingsRoute: typeof SettingsRoute
+  SetupRoute: typeof SetupRoute
   EchosIdRoute: typeof EchosIdRoute
   EchosIndexRoute: typeof EchosIndexRoute
 }
@@ -83,6 +93,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/echos/': {
@@ -105,6 +122,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SettingsRoute: SettingsRoute,
+  SetupRoute: SetupRoute,
   EchosIdRoute: EchosIdRoute,
   EchosIndexRoute: EchosIndexRoute,
 }

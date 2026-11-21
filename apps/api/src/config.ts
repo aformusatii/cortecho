@@ -51,6 +51,25 @@ function list(name: string): string[] {
     .filter(Boolean);
 }
 
+export type DiscoveryTargetConfig = { host: string; port: number };
+
+/**
+ * `host:port` entries, comma-separated. Extra targets cover Echos on another
+ * subnet and the e2e/test FakeEchos; the scan itself only ever connects to
+ * private IPv4 addresses.
+ */
+function targets(name: string): DiscoveryTargetConfig[] {
+  return list(name).map((entry) => {
+    const separator = entry.lastIndexOf(':');
+    const host = separator > 0 ? entry.slice(0, separator).trim() : '';
+    const port = separator > 0 ? Number(entry.slice(separator + 1)) : Number.NaN;
+    if (!host || host.length > 253 || !Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`${name}: "${entry}" is not host:port`);
+    }
+    return { host, port };
+  });
+}
+
 /** `{"name": {...}}` JSON from an env var, or `{}`. */
 function jsonObject<T>(name: string): Record<string, T> {
   const value = raw(name)?.trim();
@@ -99,14 +118,16 @@ function toolsFile(name: string): ToolsFile {
 export function loadConfig() {
   const fromFile = toolsFile('TOOLS_FILE');
   return {
+    discovery: {
+      /** Env-only additions to the network scan: other subnets, e2e and tests. */
+      extraTargets: targets('DISCOVERY_EXTRA_TARGETS'),
+    },
     reply: {
       /**
-       * Where the Echo downloads reply audio: this app as the Echo reaches it
-       * on the LAN (never a public URL), e.g. http://192.168.1.10:3000.
-       * Empty = http://<the address our Echo connection uses>:PORT (fine for
-       * `npm run dev` on a LAN machine, wrong inside Docker).
+       * Where the Echo downloads reply audio is the `network.replyBaseUrl`
+       * setting now (imported once from REPLY_AUDIO_BASE_URL). Only the URL
+       * lifetime stays in the environment.
        */
-      baseUrl: (optionalStr('REPLY_AUDIO_BASE_URL') ?? '').replace(/\/+$/, ''),
       /** A reply URL stops working after this long. */
       ttlMs: int('REPLY_AUDIO_TTL_MS', 120000, { min: 5000 }),
     },

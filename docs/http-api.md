@@ -1,7 +1,7 @@
 # HTTP API
 
 Base URL: `http://<docker-host>:3000`. The SPA is served at `/`, `/echos`,
-`/echos/:id` and `/settings`.
+`/echos/:id`, `/setup` and `/settings`.
 
 ## Status and turns
 
@@ -34,6 +34,31 @@ curl -s http://192.168.1.10:3000/api/ask \
   -d '{"text":"What is on my calendar?","deviceId":1}'
 ```
 
+## Setup wizard and discovery
+
+The UI's first launch and the Add Echo flow (spec §5, §7). Nothing here returns
+a device key: a key in a request body is written or checked, never echoed.
+
+| Method | Path | What |
+|---|---|---|
+| `GET` | `/api/setup` | `{onboardingDone, hasEcho, hasOpenAiKey, replyBaseUrl, homeConfirmed}` |
+| `POST` | `/api/setup/complete` | Records `onboarding.completedAt` and returns the document. Called by the wizard, and when the first Echo is adopted |
+| `DELETE` | `/api/setup/complete` | "Run the first-time setup again": clears `onboarding.completedAt` and returns the document |
+| `POST` | `/api/setup/check-openai` | `{apiKey?}` → `{ok:true}` or `{ok:false, code:"rejected"\|"unreachable"}`. Absent key = check the stored one; the key is never echoed |
+| `GET` | `/api/discovery` | `{scanning, lastScanAt, found: DiscoveredEcho[]}`; memory only, rebuilt after a restart |
+| `POST` | `/api/discovery/scan` | `{hints?: string[]}` (the UI sends `location.hostname`) → 202 with the document. At most once per 60 s; a call inside that window returns the running/last scan |
+| `POST` | `/api/discovery/ignore` | `{mac}` (12 hex or colon-separated) → 204 |
+| `DELETE` | `/api/discovery/ignore/:mac` | 204 |
+| `POST` | `/api/devices/probe` | `{host, port?, apiKey?}` → `{reachable, isVoiceAssistant, nodeName, mac, friendlyName, model, keyState:"none"\|"set"\|"matches"}` or `{reachable:false, code:"unreachable"\|"not-esphome"\|"timeout"}`. Connects, says Hello and asks DeviceInfo, then closes; never subscribes |
+| `POST` | `/api/devices/adopt` | `{host, port?, name?, kind?, apiKey?}` → 201 `DeviceStatus`. Connects, generates a key, stores it before sending it and secures an Echo that has none; `apiKey` is used only for an Echo another app already secured. Errors: `ECHO_UNREACHABLE` (502), `NOT_AN_ECHO` (409), `ECHO_KEY_SET` (409), `ECHO_KEY_INVALID` (409), `ALREADY_ADDED` (409), `ADOPT_FAILED` (502), `CONFLICT` when an adoption of the same address is already running |
+| `POST` | `/api/devices/:id/secure` | "Secure now" for an existing unkeyed row; same key step, 409 `ECHO_KEY_SET` when it already has one |
+
+A `DiscoveredEcho` has `mac`, `host`, `port`, `nodeName`, `friendlyName`,
+`model`, `keyState` (`none`/`set`), `source` (`mdns`/`scan`/`both`),
+`lastSeenAt`, `addedAs` (matched by MAC first, then `host:port`), `movedFrom`
+(the same MAC seen at a new address while the device is disconnected) and
+`ignored`. A discovery result never contains a key.
+
 ## Devices
 
 | Method | Path | What |
@@ -45,6 +70,7 @@ curl -s http://192.168.1.10:3000/api/ask \
 | `POST` | `/api/devices/:id/reconnect` | Drops and reopens the link |
 | `POST` | `/api/devices/:id/conversation/reset` | Drops that Echo's conversation memory (and any pending confirm). 204; idempotent; 404 for an unknown device |
 | `POST` | `/api/devices/:id/accept-device` | Stores the node name the Echo now reports after `unexpected-device` |
+| `POST` | `/api/devices/:id/test-sound` | Plays the bundled chime through the reply-audio path (no OpenAI call) and waits up to 8 s: `{downloaded, finished, url}`. 409 while the Echo is in a turn or not connected |
 | `GET` | `/api/devices/:id/settings` | `{version, overrides, effective}` |
 | `PATCH` | `/api/devices/:id/settings` | `{version, changes}`; only per-Echo keys; `null` = inherit |
 | `GET` | `/api/devices/:id/instructions` | The exact prompt layers the next request sends |
@@ -102,4 +128,6 @@ Errors use one shape:
 ```
 
 Codes include `VALIDATION_ERROR`, `NOT_FOUND`, `CONFLICT`,
-`ECHO_UNAVAILABLE`, `ECHO_BUSY`, `UPSTREAM_ERROR`.
+`ECHO_UNAVAILABLE`, `ECHO_BUSY`, `UPSTREAM_ERROR`, and the setup wizard's
+`ECHO_UNREACHABLE`, `NOT_AN_ECHO`, `ECHO_KEY_SET`, `ECHO_KEY_INVALID`,
+`ALREADY_ADDED`, `ADOPT_FAILED`.

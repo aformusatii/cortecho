@@ -1,6 +1,8 @@
 import {
   type DeviceSettingsDocument,
+  deviceAdoptSchema,
   deviceCreateSchema,
+  deviceProbeSchema,
   deviceSettingsPatchSchema,
   deviceUpdateSchema,
   type InstructionsDocument,
@@ -13,13 +15,14 @@ import { createLogger } from '../../lib/logger.ts';
 import { validate } from '../../lib/validation.ts';
 import { listenToolOptions } from '../../pipeline/listen-tool.ts';
 import { buildInstructions, buildPromptLayers } from '../../pipeline/prompt-layers.ts';
+import { EchoUnavailableError } from '../../pipeline/voice-pipeline.ts';
 import {
   SettingsValidationError,
   StaleSettingsError,
   UnknownDeviceError,
 } from '../settings/settings-store.ts';
 import type { VoiceRuntime } from '../voice/voice-runtime.ts';
-import { NoReportedDeviceError } from './device-manager.ts';
+import { DeviceSetupError, NoReportedDeviceError } from './device-manager.ts';
 import { type Device, DuplicateDeviceError } from './devices.repository.ts';
 import { checkHost } from './host.ts';
 
@@ -76,6 +79,42 @@ export function createDevicesRoutes(runtime: VoiceRuntime) {
         }
       })
 
+      // Setup wizard: what answers at an address (spec §7.3), and adoption (§7.4).
+      .post('/devices/probe', validate('json', deviceProbeSchema), async (c) => {
+        const body = c.req.valid('json');
+        try {
+          const result = await manager.probe({
+            host: body.host,
+            port: body.port,
+            apiKey: body.apiKey ? parseKey(body.apiKey) : null,
+          });
+          return c.json(result);
+        } catch (error) {
+          throw toAppError(error);
+        }
+      })
+
+      .post('/devices/adopt', validate('json', deviceAdoptSchema), async (c) => {
+        const body = c.req.valid('json');
+        try {
+          const created = await manager.adopt({
+            host: body.host,
+            port: body.port,
+            name: body.name,
+            kind: body.kind,
+            // A pasted key is validated by the manager (ECHO_KEY_INVALID when it does not match).
+            apiKey: body.apiKey?.trim() || null,
+          });
+          // Adopting the first Echo finishes the first launch too (§5.1): the
+          // owner may close the browser on the flow's last step. Only a real
+          // Echo counts (`hasEcho` ignores test devices).
+          if (created.kind === 'echo') runtime.setup.completeOnboarding();
+          return c.json(manager.status(created), 201);
+        } catch (error) {
+          throw toAppError(error);
+        }
+      })
+
       .patch('/devices/:id', validate('json', deviceUpdateSchema), async (c) => {
         const id = deviceId(c.req.param('id'));
         const before = deviceOr404(id);
@@ -115,6 +154,35 @@ export function createDevicesRoutes(runtime: VoiceRuntime) {
         deviceOr404(id);
         await manager.reconnect(id);
         return c.body(null, 204);
+      })
+
+      // "Secure now" (spec §7.4): the adoption key step for an existing unkeyed row.
+      .post('/devices/:id/secure', async (c) => {
+        const id = deviceId(c.req.param('id'));
+        try {
+          return c.json(manager.status(await manager.secure(id)));
+        } catch (error) {
+          throw toAppError(error);
+        }
+      })
+
+      // The setup wizard's test sound (spec §7.5): plays the bundled chime and
+      // reports whether the Echo downloaded and played it. No OpenAI call.
+      .post('/devices/:id/test-sound', async (c) => {
+        const id = deviceId(c.req.param('id'));
+        const device = deviceOr404(id);
+        const pipeline = manager.pipeline(id);
+        if (!pipeline || !device.enabled) {
+          throw new AppError(409, 'ECHO_UNAVAILABLE', 'This Echo is not connected.');
+        }
+        try {
+          return c.json(await pipeline.testSound());
+        } catch (error) {
+          if (error instanceof EchoUnavailableError) {
+            throw new AppError(409, error.code, error.message);
+          }
+          throw error;
+        }
       })
 
       // "Forget conversation": drop the Echo's session (and any pending confirm).
@@ -188,6 +256,10 @@ function deviceId(raw: string | undefined): number {
 }
 
 function toAppError(error: unknown): unknown {
+  if (error instanceof AppError) return error;
+  if (error instanceof DeviceSetupError) {
+    return new AppError(error.status, error.code, error.message, error.fields);
+  }
   if (error instanceof SettingsValidationError) return validationError(error.fields);
   if (error instanceof StaleSettingsError) {
     return new AppError(409, 'CONFLICT', error.message, { _root: `Current version: ${error.version}.` });

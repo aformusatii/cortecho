@@ -1,55 +1,8 @@
+import type { EchoProbeResult } from '@cortecho/shared';
 import { describe, expect, it } from 'vitest';
 import { FakeEcho } from '../esphome/fake-echo.ts';
-import { MSG } from '../esphome/messages.ts';
 import { createTestRuntime } from '../test-support.ts';
 import { runDoctor } from './checks.ts';
-import { probeEcho } from './probe.ts';
-
-describe('probeEcho', () => {
-  it('says hello in plaintext without subscribing to the voice assistant', async () => {
-    const echo = new FakeEcho();
-    const port = await echo.start();
-    try {
-      const result = await probeEcho({ host: '127.0.0.1', port, apiKey: null });
-      expect(result.problem).toBeUndefined();
-      expect(result.reachable).toBe(true);
-      expect(result.encryption).toBe('plaintext');
-      expect(echo.received.some((message) => message.type === MSG.SUBSCRIBE_VOICE_ASSISTANT_REQUEST)).toBe(
-        false,
-      );
-    } finally {
-      await echo.stop();
-    }
-  });
-
-  it('accepts a correct key and rejects a wrong one', async () => {
-    const key = Buffer.alloc(32, 7);
-    const echo = new FakeEcho({ apiKey: key });
-    const port = await echo.start();
-    try {
-      const good = await probeEcho({ host: '127.0.0.1', port, apiKey: key.toString('base64') });
-      expect(good.encryption).toBe('noise');
-      expect(good.keyAccepted).toBe(true);
-      expect(good.problem).toBeUndefined();
-
-      const bad = await probeEcho({
-        host: '127.0.0.1',
-        port,
-        apiKey: Buffer.alloc(32, 8).toString('base64'),
-      });
-      expect(bad.reachable).toBe(true);
-      expect(bad.problem).toBe('invalid-key');
-    } finally {
-      await echo.stop();
-    }
-  });
-
-  it('reports an unreachable Echo', async () => {
-    const result = await probeEcho({ host: '127.0.0.1', port: 9, apiKey: null, timeoutMs: 1500 });
-    expect(result.reachable).toBe(false);
-    expect(result.problem).toBe('unreachable');
-  });
-});
 
 describe('runDoctor', () => {
   it('fails when no Echo is configured, without touching the network', async () => {
@@ -86,6 +39,93 @@ describe('runDoctor', () => {
       expect(envCheck?.status).toBe('warn');
       expect(envCheck?.detail).toContain('OPENAI_TIMEOUT_MS');
       expect(envCheck?.detail).toContain('Europe/Berlin');
+    } finally {
+      ctx.sqlite.close();
+    }
+  });
+
+  it('reports an Echo that requires a key the device does not have', async () => {
+    const fake = new FakeEcho({ apiKey: Buffer.alloc(32, 7) });
+    const port = await fake.start();
+    const ctx = createTestRuntime({ devices: [{ name: 'Kitchen', port }] });
+    try {
+      const report = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: ctx.repository.list(),
+        production: false,
+        env: {},
+        fetchImpl: async () => new Response('[]', { status: 200 }),
+      });
+      const echoCheck = report.checks.find((check) => check.name === 'Echo Kitchen');
+      expect(echoCheck?.status).toBe('fail');
+      expect(echoCheck?.detail).toContain('requires an API key');
+    } finally {
+      await fake.stop();
+      ctx.sqlite.close();
+    }
+  });
+
+  it('reports the reply address from the setting, and fails in production without one', async () => {
+    const ctx = createTestRuntime({ devices: [{ name: 'Kitchen', port: 26053 }], production: true });
+    try {
+      const failing = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: ctx.repository.list(),
+        production: true,
+        env: {},
+        probe: async (): Promise<EchoProbeResult> => ({ reachable: false, code: 'unreachable' }),
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      const missing = failing.checks.find((check) => check.name === 'reply address');
+      expect(missing?.status).toBe('fail');
+      expect(missing?.fix).toContain('Settings → Network');
+
+      ctx.settings.apply({ 'network.replyBaseUrl': 'http://192.168.1.10:3000' }, ctx.settings.version);
+      const passing = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: ctx.repository.list(),
+        production: true,
+        env: {},
+        probe: async (): Promise<EchoProbeResult> => ({ reachable: false, code: 'unreachable' }),
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      expect(passing.checks.find((check) => check.name === 'reply address')).toMatchObject({
+        status: 'pass',
+        detail: expect.stringContaining('http://192.168.1.10:3000'),
+      });
+    } finally {
+      ctx.sqlite.close();
+    }
+  });
+
+  it('does not list REPLY_AUDIO_BASE_URL as ignored until it is stored', async () => {
+    const ctx = createTestRuntime();
+    try {
+      const before = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: [],
+        production: false,
+        env: { REPLY_AUDIO_BASE_URL: 'http://192.168.1.10:3000' },
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      expect(before.checks.find((check) => check.name === 'environment')?.status).toBe('pass');
+
+      ctx.settings.apply({ 'network.replyBaseUrl': 'http://192.168.1.10:3000' }, ctx.settings.version);
+      const after = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: [],
+        production: false,
+        env: { REPLY_AUDIO_BASE_URL: 'http://192.168.1.10:3000' },
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      expect(after.checks.find((check) => check.name === 'environment')?.detail).toContain(
+        'REPLY_AUDIO_BASE_URL',
+      );
     } finally {
       ctx.sqlite.close();
     }

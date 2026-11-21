@@ -92,6 +92,9 @@ export function createVoiceRoutes(runtime: VoiceRuntime) {
         const id = REPLY_FILE.exec(c.req.param('file'))?.[1];
         const reply = id ? runtime.replies.get(id) : null;
         if (!reply) throw new AppError(404, 'NOT_FOUND', 'No such reply.');
+        // The download hook (spec §7.5): the test sound needs to know the Echo
+        // actually fetched the URL, not only that it answered AnnounceFinished.
+        runtime.replies.markServed(reply.id);
         const wav = reply.wav();
         const body = new ReadableStream<Uint8Array>({
           async pull(controller) {

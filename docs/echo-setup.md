@@ -4,54 +4,75 @@ Cortecho does not modify the Echo. It is a voice assistant client for
 [echo-dot-assist](https://github.com/Gamer92000/echo-dot-assist), whose
 `hassmic` daemon runs on a rooted Echo and exposes the ESPHome native API.
 
-## What you need
+## Ready for Cortecho?
 
-- A supported Echo that is already rooted and running echo-dot-assist.
-  Only the **Echo Dot 2nd gen** is tested by this project today; the same
-  `hassmic` daemon runs on the other supported models, so they will probably
-  work. Please report your model with the device-report issue template.
+Check these first; the setup wizard checks what it can and says in plain words
+what is missing.
+
+- A supported Echo that is already rooted and running echo-dot-assist. Only the
+  **Echo Dot 2nd gen** is tested by this project today; the same `hassmic`
+  daemon runs on the other supported models, so they will probably work. Please
+  report your model with the device-report issue template.
 - `hassmic` in **ESPHome mode**: `PROTO=esphome` in
   `/data/local/hassmic/hassmic.conf`.
-- `hassmic` reachable on TCP `26053` from the machine that runs Cortecho.
+- `hassmic` reachable on TCP `26053` from the machine that runs Cortecho, on the
+  same network.
 - A unique `NAME` in `hassmic.conf` when you run several Echos; hassmic's
   network uses it.
 - The Echo's firewall (`lockdown.sh`) left as the project sets it. The Echo
-  must be able to reach `REPLY_AUDIO_BASE_URL` on your LAN.
+  must be able to reach this computer on your LAN (the **Reply address** in
+  Settings → Network).
+- Nothing else subscribed to the Echo's voice assistant (Home Assistant or a
+  second Cortecho). hassmic gives it to the first subscriber only.
 
 Follow the echo-dot-assist guide for rooting and installation. Do not disable
 the firewall, and do not expose the Echo's ports beyond the LAN.
 
-## The API key (optional but recommended)
+Then start Cortecho, open the UI and use **Setup** (or the Discovered card on
+the Echos page): it finds the Echo, secures the link and plays a test sound.
 
-The link can be plaintext or encrypted with an ESPHome API key. Use a key: it
-encrypts the audio and it is the only way hassmic accepts its clock.
+<a id="the-api-key"></a>
 
-Set the key **once**, the way Home Assistant does when it adopts a device:
+## Securing the Echo
+
+The link can be plaintext or encrypted with a key. Use a key: it encrypts the
+audio and it is the only way hassmic accepts its clock.
+
+**Adding the Echo secures it.** In **Setup** (or **Echos → Add Echo**, or the
+Echo's Discovered card), Cortecho generates a 32-byte key, stores it before
+sending it, and sets it on the Echo the way Home Assistant adopts a device. The
+key is never shown in the browser, never printed and never logged; there is no
+separate "Secure" button. Nothing else on the Echo changes.
+
+If another app (often Home Assistant) already set a key on the Echo, the wizard
+says so. Paste that key there, or remove it on the Echo and try again.
+
+**CLI fallback** for a headless install or a rescue; it shares the same
+handshake code as the wizard:
 
 ```bash
 npm run echo-set-key -- --host 192.168.1.50 --env-file cortecho.env
 ```
 
 The command generates a 32-byte key, sends it to the Echo, writes
-`ECHO_API_KEY` into `cortecho.env` (mode 0600) and never prints it. Then add the
-same key in the UI: **Echos → the Echo → Connection → API key**.
-
-Changing the key later is a device change: remove
-`/data/local/hassmic/state/api_key` on the Echo and restart hassmic, or re-run
-the command. The app can log in with the all-zero key exactly once, while the
-Echo has no key yet.
+`ECHO_API_KEY` into `cortecho.env` (mode 0600) and never prints it. Add the Echo
+in the UI: a fresh install imports the file, or paste the value under
+**Connection → Advanced**. Removing a key, changing it or re-keying stays a
+device change: Cortecho never rotates or clears it from the app.
 
 Consequences of a keyed link:
 
 - hassmic refuses plaintext and any other key. The app reports
-  `encryption-required` or `invalid-key` on the status page.
+  `encryption-required` or `invalid-key` on the status page, with a **Fix**
+  action that opens the "already secured" step.
 - The clock is set **only** over the keyed link.
 - Device-admin messages (update install, adb switch, reset buttons) are never
   sent by Cortecho.
 
-To undo, delete `/data/local/hassmic/state/api_key` on the Echo, restart
-hassmic (`stop hassmic; start hassmic`) and use **Remove key** in the Echo's
-Connection tab.
+To remove a key, delete `/data/local/hassmic/state/api_key` on the Echo and
+restart hassmic (`stop hassmic; start hassmic`), then use **Forget the key in
+Cortecho** in the Echo's Connection tab (it only forgets it here; the Echo's
+key is already gone).
 
 ## The clock
 
@@ -89,8 +110,12 @@ first (a keyed link and a running Cortecho do it automatically).
 ## Several Echos
 
 1. Give every Echo a unique `NAME` in `hassmic.conf`.
-2. Add each one in the UI: **Echos → Add Echo**, with its address, port and
-   key. A card must show *Connected · Encrypted* and a clock sync.
+2. Open **Setup** (always in the main nav) or the **Echos** page. A new Echo
+   appears as a **Discovered** card within a minute: click **Add**, hear the
+   sound, pick a room. Discovery can miss an Echo (another subnet, a bridge
+   network without mDNS); **Setup** always offers **Enter an address instead**,
+   and **Search again**. A card must show *Connected · Secured* and a clock
+   sync.
 3. **Pair the Echos**: hold Volume up + Volume down for 2 s on the new Echo,
    then on one already in the network. Its settings page must show it as a
    member, not "outside". Without pairing, every Echo that hears the wake word

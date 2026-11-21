@@ -8,14 +8,15 @@ Amazon.com, Inc.
 
 ## Documentation
 
-- [README](README.md): what it is, why an Echo Dot, quick start, FAQ.
+- [README](README.md): what it is, why an Echo Dot, quick start (UI setup), FAQ.
 - [Protocol](docs/protocol.md): how a turn works, ESPHome messages, follow-ups.
 - [Performance](docs/performance.md): where the answer latency goes.
 - [Configuration](docs/configuration.md): the layers, every setting.
 - [Connectors](docs/connectors.md): MCP servers, OAuth, tool policies.
-- [Deployment](docs/deployment.md): Docker, ports, backups.
-- [Echo setup](docs/echo-setup.md): echo-dot-assist, API key, clock, wake word.
+- [Deployment](docs/deployment.md): Docker, optional env file, discovery, backups.
+- [Echo setup](docs/echo-setup.md): readiness checklist, securing the link, clock,
+  wake word, several Echos (Setup tab and Discovered cards).
 - [Troubleshooting](docs/troubleshooting.md): symptom and fix.
 - [Development](docs/development.md): commands, tests, adding a tool.
-- [HTTP API](docs/http-api.md): endpoints and error shape.
+- [HTTP API](docs/http-api.md): devices, discovery, setup, connectors, error shape.
 - [Set up with an agent](docs/setup-with-an-agent.md): a page for a coding agent.

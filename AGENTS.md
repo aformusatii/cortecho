@@ -22,7 +22,7 @@ Run everything from the repository root.
 | `npm install` | Install all workspaces |
 | `npm run dev` | API on `:3000` (`node --watch`) + Vite on `:5173`. With no device, no ESPHome client starts |
 | `npm run fake-echo -- q.wav [--port 26099] [--out a.wav] [--key b64]` | Fake hassmic on localhost: plays a WAV as a wake-word run, downloads and saves the answer |
-| `npm run echo-set-key -- --host 192.168.1.50` | **Changes the Echo**: gives it an API key, once. Ask the owner first |
+| `npm run echo-set-key -- --host 192.168.1.50` | **Changes the Echo**: gives it an API key, once (fallback; the UI adopts Echos itself). Ask the owner first |
 | `npm run build` / `npm start` | Production build / server (API + SPA on `:3000`) |
 | `npm run typecheck` | `tsc --noEmit` for every workspace and `e2e/` |
 | `npm run lint` | Biome lint + format check (`npm run format` fixes) |
@@ -98,10 +98,14 @@ apps/api/src/
     noise.ts              Noise_NNpsk0_25519_ChaChaPoly_SHA256 on node:crypto
     timezone.ts           POSIX TZ rule of an IANA zone, for GetTimeResponse
     client.ts             EsphomeClient: one socket, hello/subscribe, ping, time, reconnect
+    adopt.ts              probe (Hello + DeviceInfo) and SetKey adoption; CLI and manager share it
+    mac.ts                MAC normalisation (12 lower-case hex) for discovery and adoption
     fake-echo.ts          FakeEcho (hassmic on localhost); also the smoke suite's simulated Echo
   vad/end-of-speech.ts    energy VAD (adaptive noise floor): ends requests, as HA does
   features/settings/      SQLite store, per-Echo overrides, validation, one-time import, routes
-  features/devices/       SQLite CRUD, one client + pipeline per Echo, identity checks, routes
+  features/devices/       SQLite CRUD, one client + pipeline per Echo, identity checks, adopt/secure, routes
+  features/discovery/     mDNS browse + subnet probe, ignore list, /api/discovery routes
+  features/setup/         onboarding state (app_state) and the OpenAI check, /api/setup routes
   features/turns/         SQLite history (newest 1000)
   features/voice/         /api/turns, /api/say, /api/ask, /api/reply-audio
   doctor/                 read-only checks behind the CLI and GET /api/doctor
@@ -111,7 +115,8 @@ apps/api/src/
 apps/api/drizzle/         generated SQL migrations - committed, never edited by hand
 apps/web/src/
   routes/                 thin TanStack file routes
-  features/{status,settings,devices,voice}/  pages, queries, components
+  features/{status,settings,devices,voice,setup}/  pages, queries, components
+                          (setup: onboarding, the shared Add Echo flow, Discovered cards)
   components/, lib/       app shell + nav, ui/, api-client, query-client, displays
 e2e/                      Playwright specs, helpers, FakeEcho server
 smoke/                    production smoke tests (not a workspace; not in `npm test` or CI)
@@ -213,16 +218,26 @@ docs/                     user and contributor documentation
   in the agent, never with a second model round when text came with it.
 - After `VoiceAssistantRequest{start:false}` send nothing more for that run.
 - Replies: a URL in `TTS_END` (and announcements), **WAV or MP3 only**,
-  reachable from the Echo on the LAN (`REPLY_AUDIO_BASE_URL`, never a public
-  URL). The endpoint serves only a current reply by its random id (one per
-  Echo); a device's reply is revoked when it starts the next one, is stopped,
-  deleted or replaced.
+  reachable from the Echo on the LAN (the **Reply address** setting,
+  `network.replyBaseUrl`, read from the turn's settings snapshot; never a
+  public URL). The endpoint serves only a current reply by its random id (one
+  per Echo); a device's reply is revoked when it starts the next one, is
+  stopped, deleted or replaced. `REPLY_AUDIO_BASE_URL` is only its one-time
+  upgrade import; a turn must not read the environment.
 - `GetTimeResponse.epoch_seconds` is a fixed32; hassmic sets its clock from
   it **only** over the keyed (Noise) link. Encrypted messages we send stay
   under 8 KiB (hassmic drops larger ones).
 - Never send device-admin messages (update install, adb switch, reset/restart
-  buttons, settings writes, SetKey) from the app. `echo-set-key` is a
-  separate, owner-run CLI.
+  buttons, settings writes) from the app.
+- **`SetKey` is the one exception, and only to adopt an Echo**, as Home
+  Assistant does: the app sends `NoiseEncryptionSetKeyRequest` with a new
+  random key only to an Echo that has **no key yet**, over a zero-PSK Noise
+  link (never plaintext), only when the owner adds that Echo in the UI, and
+  stores the key before the link restarts with it. Never rotate or clear a key
+  from the app (an empty key would open the Echo to plaintext again); removing
+  a key stays a manual step on the Echo. The `DeviceManager` does the adoption
+  with the device's own link closed, so there is still one connection per Echo.
+  `echo-set-key` stays as a CLI fallback and shares the same handshake code.
 
 ## Conventions
 

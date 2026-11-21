@@ -162,6 +162,7 @@ export class EsphomeClient extends EventEmitter<ClientEvents> {
       version: info.projectVersion,
       supportsAnnounce: (info.voiceAssistantFeatureFlags & VA_FEATURE.ANNOUNCE) !== 0,
       supportsFollowUp: (info.voiceAssistantFeatureFlags & VA_FEATURE.START_CONVERSATION) !== 0,
+      provisionable: info.provisionable === true,
     };
   }
 

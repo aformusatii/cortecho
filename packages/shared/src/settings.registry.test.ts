@@ -94,5 +94,50 @@ describe('settings registry', () => {
     );
     expect(perEcho).not.toContain('agent.model');
     expect(perEcho).not.toContain('openai.apiKey');
+    expect(perEcho).not.toContain('network.replyBaseUrl');
+  });
+});
+
+describe('network.replyBaseUrl', () => {
+  const schema = SETTING_BY_KEY.get('network.replyBaseUrl')?.schema;
+  if (!schema) throw new Error('network.replyBaseUrl must exist');
+
+  it('is the Network section, global, with the upgrade-copy env name', () => {
+    expect(SETTING_BY_KEY.get('network.replyBaseUrl')).toMatchObject({
+      section: 'network',
+      perEcho: false,
+      default: '',
+      env: 'REPLY_AUDIO_BASE_URL',
+    });
+  });
+
+  it('accepts empty, LAN URLs and host names, stripping trailing slashes', () => {
+    expect(schema.safeParse('')).toMatchObject({ success: true, data: '' });
+    expect(schema.safeParse('http://192.168.1.10:3000')).toMatchObject({
+      success: true,
+      data: 'http://192.168.1.10:3000',
+    });
+    const slashed = schema.safeParse('http://192.168.1.10:3000///');
+    if (slashed.success) expect(slashed.data).toBe('http://192.168.1.10:3000');
+    const named = schema.safeParse('  http://cortecho.local:3000  ');
+    if (named.success) expect(named.data).toBe('http://cortecho.local:3000');
+    expect(schema.safeParse('https://10.0.0.2:8443').success).toBe(true);
+  });
+
+  it('refuses public addresses and anything with a path, query or fragment', () => {
+    for (const value of [
+      'ftp://192.168.1.10',
+      'http://8.8.8.8:3000',
+      'http://192.168.1.10:3000/api',
+      'http://192.168.1.10:3000?x=1',
+      'http://192.168.1.10:3000#y',
+      'not an address',
+    ]) {
+      expect(schema.safeParse(value).success, value).toBe(false);
+    }
+    const publicAddress = schema.safeParse('http://8.8.8.8:3000');
+    if (!publicAddress.success) {
+      expect(publicAddress.error.issues[0]?.message).toContain("this computer's address");
+    }
   });
 });

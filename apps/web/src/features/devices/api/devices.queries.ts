@@ -17,11 +17,11 @@ export const devicesKeys = {
 /** The Echos are live objects: the cards show connection changes within seconds. */
 const POLL_MS = 5000;
 
-export function devicesQueryOptions() {
+export function devicesQueryOptions(refetchInterval: number = POLL_MS) {
   return queryOptions({
     queryKey: devicesKeys.list,
     queryFn: ({ signal }) => apiRequest<DeviceStatus[]>('/api/devices', { signal }),
-    refetchInterval: POLL_MS,
+    refetchInterval,
     staleTime: 0,
   });
 }
@@ -43,11 +43,11 @@ export function deviceInstructionsQueryOptions(id: number, enabled: boolean) {
   });
 }
 
-export function deviceTurnsQueryOptions(id: number, limit: number) {
+export function deviceTurnsQueryOptions(id: number, limit: number, refetchInterval = POLL_MS) {
   return queryOptions({
     queryKey: devicesKeys.turns(id, limit),
     queryFn: ({ signal }) => apiRequest<Turn[]>(`/api/turns?limit=${limit}&deviceId=${id}`, { signal }),
-    refetchInterval: POLL_MS,
+    refetchInterval,
     staleTime: 0,
   });
 }

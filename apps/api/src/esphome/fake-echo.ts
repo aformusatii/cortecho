@@ -103,6 +103,20 @@ export type FakeEchoOptions = {
   buildTime?: string;
   /** HelloResponse server info ("hassmic <VERSION>"). */
   serverInfo?: string;
+  /**
+   * hassmic's MAX_CLIENTS. Unit tests set 1 to prove a caller never opens two
+   * connections to one Echo at the same time (a second socket is refused).
+   */
+  maxClients?: number;
+  /** The DeviceInfo voice assistant feature bits (default: everything hassmic offers). */
+  voiceAssistantFlags?: number;
+  /**
+   * Drop the next N SetKey answers by closing the socket (the request reached
+   * the Echo, the answer never came back — a reboot after storing the key).
+   */
+  loseSetKeyResponses?: number;
+  /** With `loseSetKeyResponses`: store the key before dropping (the realistic case). */
+  storeKeyWhenLost?: boolean;
 };
 
 export type ReceivedEvent = { type: string; data: VaEventData };
@@ -177,6 +191,14 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
       | 'roomNoiseDbfs'
     >
   > & { apiKey: Buffer | null };
+  /** How many SetKey answers are still to be lost (mutable for tests). */
+  private setKeyLossesLeft: number;
+  /** SetKey requests seen (including the lost ones). */
+  setKeyRequests = 0;
+  /** Connections accepted since start (hassmic's MAX_CLIENTS slots). */
+  connectionsAccepted = 0;
+  /** The most connections that were open at the same time (1 = never two). */
+  maxOpenConnections = 0;
   /** hassmic's `cancelled` 0/1/2: 1 after a cancel, 2 after the next start. */
   private cancelled: 0 | 1 | 2 = 0;
   private timeAsked = 0;
@@ -269,15 +291,34 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
       friendlyName: '',
       buildTime: '',
       serverInfo: 'hassmic test',
+      maxClients: 4,
+      voiceAssistantFlags:
+        VA_FEATURE.VOICE_ASSISTANT |
+        VA_FEATURE.API_AUDIO |
+        VA_FEATURE.TIMERS |
+        VA_FEATURE.ANNOUNCE |
+        VA_FEATURE.START_CONVERSATION,
+      loseSetKeyResponses: 0,
+      storeKeyWhenLost: false,
       ...options,
     };
     this.fetchAudio = this.options.fetchAudio;
     this.followUpAudio = this.options.followUpAudio;
     this.endOfRequest = this.options.endOfRequest;
+    this.setKeyLossesLeft = this.options.loseSetKeyResponses;
   }
 
   get apiKey(): Buffer | null {
     return this.options.apiKey;
+  }
+
+  /**
+   * Replace the stored key. Only the e2e control server calls this, to put the
+   * simulator back into a known state between scenarios; nothing in Cortecho
+   * ever changes an Echo's key except the adoption SetKey (AGENTS.md).
+   */
+  setApiKey(key: Buffer | null): void {
+    this.options.apiKey = key;
   }
 
   start(): Promise<number> {
@@ -308,6 +349,11 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
 
   get isSubscribed(): boolean {
     return this.va !== null && !this.va.socket.destroyed;
+  }
+
+  /** Connections open right now (the tests assert the app never holds two). */
+  get openConnections(): number {
+    return this.connections.size;
   }
 
   eventTypes(): string[] {
@@ -553,12 +599,14 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
   }
 
   private onConnection(socket: net.Socket): void {
-    if (this.connections.size >= 4) {
+    if (this.connections.size >= this.options.maxClients) {
       socket.destroy(); // hassmic: MAX_CLIENTS
       return;
     }
     const conn: Connection = { socket, codec: null, keyed: false };
     this.connections.add(conn);
+    this.connectionsAccepted += 1;
+    this.maxOpenConnections = Math.max(this.maxOpenConnections, this.connections.size);
     socket.on('error', () => {});
     socket.on('close', () => {
       this.connections.delete(conn);
@@ -661,12 +709,7 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
             manufacturer: this.options.manufacturer,
             friendlyName: this.options.friendlyName || this.defaultFriendlyName(),
             ...(this.options.buildTime ? { buildTime: this.options.buildTime } : {}),
-            voiceAssistantFeatureFlags:
-              VA_FEATURE.VOICE_ASSISTANT |
-              VA_FEATURE.API_AUDIO |
-              VA_FEATURE.TIMERS |
-              VA_FEATURE.ANNOUNCE |
-              VA_FEATURE.START_CONVERSATION,
+            voiceAssistantFeatureFlags: this.options.voiceAssistantFlags,
             apiEncryptionSupported: true,
             // No key set yet: Home Assistant may provision one.
             ...(this.options.apiKey ? {} : { provisionable: true }),
@@ -721,11 +764,21 @@ export class FakeEcho extends EventEmitter<FakeEchoEvents> {
         return;
       case MSG.NOISE_ENCRYPTION_SET_KEY_REQUEST: {
         // Only over an encrypted link (zero PSK while no key is set), like hassmic.
+        this.setKeyRequests += 1;
         const key = Buffer.from(new ProtoMessage(payload).string(1), 'base64');
         const ok = conn.codec instanceof NoiseTransportCodec && key.length === 32;
-        if (ok) {
+        const lose = this.setKeyLossesLeft > 0;
+        if (lose) this.setKeyLossesLeft -= 1;
+        // A lost answer: hassmic may already have written state/api_key, then the
+        // Echo restarted. The client must not assume either way.
+        if (ok && (!lose || this.options.storeKeyWhenLost)) {
           this.options.apiKey = key;
           conn.keyed = true;
+        }
+        if (lose) {
+          this.log('set-key: answer lost');
+          conn.socket.destroy();
+          return;
         }
         this.sendTo(conn, MSG.NOISE_ENCRYPTION_SET_KEY_RESPONSE, new ProtoWriter().bool(1, ok).finish());
         return;

@@ -4,11 +4,18 @@ import { loadConfig } from './config.ts';
 import { openDatabase } from './db/client.ts';
 import { runMigrations } from './db/migrate.ts';
 import { runDoctor } from './doctor/checks.ts';
+import type { probeEcho } from './esphome/adopt.ts';
 import type { EsphomeClient } from './esphome/client.ts';
+import { normalizeMac } from './esphome/mac.ts';
 import { DeviceManager } from './features/devices/device-manager.ts';
 import { createDevicesRepository } from './features/devices/devices.repository.ts';
+import { createDiscoveryRepository } from './features/discovery/discovery.repository.ts';
+import { DiscoveryService } from './features/discovery/discovery.service.ts';
+import type { MdnsBrowser } from './features/discovery/mdns.ts';
+import type { tcpConnect } from './features/discovery/subnet.ts';
 import { importSettingsFromEnvironment } from './features/settings/import.ts';
 import { SettingsStore } from './features/settings/settings-store.ts';
+import { createSetupRepository } from './features/setup/setup.repository.ts';
 import { createTurnsRepository } from './features/turns/turns.repository.ts';
 import type { VoiceRuntime } from './features/voice/voice-runtime.ts';
 import { createSecretBox } from './lib/secret-box.ts';
@@ -100,6 +107,8 @@ export type TestDevice = {
   overrides?: Record<string, unknown>;
   /** Pre-set the learned node name (to test the unexpected-device guard). */
   nodeName?: string;
+  /** Pre-set the learned MAC (12 hex, either spelling) to test the guard. */
+  mac?: string | null;
 };
 
 /**
@@ -113,17 +122,39 @@ export function createTestRuntime({
   apiKey = null,
   env = {},
   devices: deviceSpecs,
+  linkTimeoutMs,
+  production = false,
+  discovery: discoverySpec,
+  fetchImpl,
 }: {
   echoPort?: number;
   apiKey?: Buffer | null;
   env?: Record<string, string>;
   devices?: TestDevice[];
+  /** Short adoption/secure link wait (the tests do not need 10 s). */
+  linkTimeoutMs?: number;
+  /** The manager's "this is a production install" signal (reply-address-missing). */
+  production?: boolean;
+  /** Tests only: replaces fetch for the setup wizard's OpenAI check. */
+  fetchImpl?: typeof fetch;
+  /** Discovery overrides; mDNS stays off unless a test passes a fake browser. */
+  discovery?: {
+    mdns?: MdnsBrowser | null;
+    now?: () => number;
+    entryTtlMs?: number;
+    scanIntervalMs?: number;
+    probe?: typeof probeEcho;
+    connect?: typeof tcpConnect;
+    connectTimeoutMs?: number;
+    connectInFlight?: number;
+    probeTimeoutMs?: number;
+  };
 } = {}) {
+  // The runtime's config and its one-time settings import both read the same
+  // values, as a real start does. No reply default is injected: tests use the
+  // documented link fallback, and a test that needs a base URL saves the setting.
   const saved = { ...process.env };
-  Object.assign(process.env, {
-    REPLY_AUDIO_BASE_URL: TEST_REPLY_BASE_URL,
-    ...env,
-  });
+  Object.assign(process.env, env);
   const config = loadConfig();
 
   const { db, sqlite } = openDatabase(':memory:');
@@ -152,6 +183,7 @@ export function createTestRuntime({
       apiKey: key,
       enabled: spec.enabled ?? true,
       prompt: spec.prompt ?? '',
+      mac: spec.mac ? normalizeMac(spec.mac) : null,
     });
     if (spec.overrides && Object.keys(spec.overrides).length > 0) {
       settings.registerDevice(device.id, device.name, {});
@@ -162,6 +194,7 @@ export function createTestRuntime({
   });
 
   const turns = createTurnsRepository(db);
+  const setup = createSetupRepository(db);
   const services = fakeServices();
   const tools = buildToolRegistry(config);
   const secretBox = createSecretBox(config.mcp.secretKey);
@@ -183,6 +216,23 @@ export function createTestRuntime({
     sessions,
     config,
     tools,
+    production,
+    linkTimeoutMs,
+  });
+  const discovery = new DiscoveryService({
+    devices,
+    repository: createDiscoveryRepository(db),
+    extraTargets: config.discovery.extraTargets,
+    replyBaseUrl: () => settings.current().settings.network.replyBaseUrl,
+    mdns: discoverySpec?.mdns ?? null,
+    probe: discoverySpec?.probe,
+    now: discoverySpec?.now,
+    entryTtlMs: discoverySpec?.entryTtlMs,
+    scanIntervalMs: discoverySpec?.scanIntervalMs,
+    connect: discoverySpec?.connect,
+    connectTimeoutMs: discoverySpec?.connectTimeoutMs,
+    connectInFlight: discoverySpec?.connectInFlight,
+    probeTimeoutMs: discoverySpec?.probeTimeoutMs,
   });
   const runtime: VoiceRuntime = {
     config,
@@ -194,6 +244,7 @@ export function createTestRuntime({
     settings,
     sessions,
     devices,
+    discovery,
     doctor: () =>
       runDoctor({
         config,
@@ -202,12 +253,15 @@ export function createTestRuntime({
         production: false,
         mcp,
       }),
+    setup,
     startedAt: new Date(),
   };
-  const app = createApp({ db, voice: runtime });
+  const app = createApp({ db, voice: runtime, fetchImpl });
   /** What the fake Echo uses to download reply audio: the URL path, through the Hono app. */
   const fetchAudio = async (url: string): Promise<Buffer> => {
-    const response = await app.request(url.replace(TEST_REPLY_BASE_URL, ''));
+    // Any reply base works (the link fallback, or the setting a test saved).
+    const target = new URL(url);
+    const response = await app.request(`${target.pathname}${target.search}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return Buffer.from(await response.arrayBuffer());
   };
@@ -223,6 +277,7 @@ export function createTestRuntime({
     services,
     repository,
     devices,
+    discovery,
     mcp,
     mcpRepository,
     sessions,

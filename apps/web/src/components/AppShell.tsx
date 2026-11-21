@@ -1,19 +1,25 @@
+import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
+import { discoveryQueryOptions, newEchoCount } from '@/features/setup/api/discovery.queries.ts';
 import { OfflineBanner } from './OfflineBanner.tsx';
 
 // The default focus ring is too dark to see on the ink header.
 const FOCUS_ON_DARK = 'outline-none focus-visible:ring-3 focus-visible:ring-signal/70';
 const NAV_LINK =
-  'relative inline-flex min-h-11 items-center rounded-md px-2 text-ink-foreground/70 hover:text-ink-foreground data-[status=active]:text-ink-foreground data-[status=active]:after:absolute data-[status=active]:after:inset-x-2 data-[status=active]:after:bottom-1 data-[status=active]:after:h-0.5 data-[status=active]:after:rounded-full data-[status=active]:after:bg-signal';
+  'relative inline-flex min-h-11 items-center rounded-md px-1.5 text-ink-foreground/70 hover:text-ink-foreground data-[status=active]:text-ink-foreground data-[status=active]:after:absolute data-[status=active]:after:inset-x-2 data-[status=active]:after:bottom-1 data-[status=active]:after:h-0.5 data-[status=active]:after:rounded-full data-[status=active]:after:bg-signal sm:px-2';
 
-const LINKS: { to: '/' | '/echos' | '/settings'; label: string; exact?: boolean }[] = [
+const LINKS: { to: '/' | '/echos' | '/settings' | '/setup'; label: string; exact?: boolean }[] = [
   { to: '/', label: 'Status', exact: true },
   { to: '/echos', label: 'Echos' },
   { to: '/settings', label: 'Settings' },
+  { to: '/setup', label: 'Setup' },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const discovery = useQuery(discoveryQueryOptions());
+  const newEchos = newEchoCount(discovery.data);
+
   return (
     <div className="flex min-h-dvh flex-col">
       <a
@@ -39,15 +45,22 @@ export function AppShell({ children }: { children: ReactNode }) {
             />
             <span className="hidden sm:inline">Cortecho</span>
           </Link>
-          <nav aria-label="Main" className="ml-auto flex items-center gap-1 text-sm sm:gap-2">
+          <nav aria-label="Main" className="ml-auto flex items-center gap-0.5 text-sm sm:gap-2">
             {LINKS.map((link) => (
               <Link
                 key={link.to}
                 to={link.to}
                 activeOptions={link.exact ? { exact: true } : undefined}
+                aria-label={link.to === '/echos' && newEchos > 0 ? `Echos, ${newEchos} new` : link.label}
                 className={`${NAV_LINK} ${FOCUS_ON_DARK}`}
               >
                 {link.label}
+                {link.to === '/echos' && newEchos > 0 && (
+                  <span aria-hidden="true" className="ml-1 inline-flex items-center gap-1">
+                    <span className="size-1.5 rounded-full bg-signal" />
+                    <span className="tabular-nums">{newEchos}</span>
+                  </span>
+                )}
               </Link>
             ))}
           </nav>

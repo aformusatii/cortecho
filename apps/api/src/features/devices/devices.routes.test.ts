@@ -53,6 +53,7 @@ describe('devices API', () => {
       enabled: true,
       state: 'disconnected',
       problem: null,
+      mac: null,
       overrideCount: 0,
     });
     expect(body).not.toContain(KEY);

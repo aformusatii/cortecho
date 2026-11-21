@@ -7,9 +7,11 @@ import { logger } from 'hono/logger';
 import { secureHeaders } from 'hono/secure-headers';
 import type { Db } from './db/client.ts';
 import { createDevicesRoutes } from './features/devices/devices.routes.ts';
+import { createDiscoveryRoutes } from './features/discovery/discovery.routes.ts';
 import { createDoctorRoutes } from './features/doctor/doctor.routes.ts';
 import { createMcpRoutes } from './features/mcp/mcp.routes.ts';
 import { createSettingsRoutes } from './features/settings/settings.routes.ts';
+import { createSetupRoutes } from './features/setup/setup.routes.ts';
 import { buildHealth, createVoiceRoutes } from './features/voice/voice.routes.ts';
 import type { VoiceRuntime } from './features/voice/voice-runtime.ts';
 import { AppError } from './lib/errors.ts';
@@ -24,6 +26,8 @@ export type AppOptions = {
   logRequests?: boolean;
   /** Absolute path of apps/web/dist. When set, the SPA is served too. */
   webDistDir?: string;
+  /** Tests only: replaces fetch for the setup wizard's OpenAI check. */
+  fetchImpl?: typeof fetch;
 };
 
 const MAX_BODY_BYTES = 100 * 1024;
@@ -32,7 +36,14 @@ const MAX_BODY_BYTES = 100 * 1024;
  * Builds the Hono app without starting a server, so tests can call
  * `app.request(...)` against an in-memory database.
  */
-export function createApp({ db, voice, enableCors = false, logRequests = false, webDistDir }: AppOptions) {
+export function createApp({
+  db,
+  voice,
+  enableCors = false,
+  logRequests = false,
+  webDistDir,
+  fetchImpl,
+}: AppOptions) {
   const app = new Hono();
 
   if (logRequests) app.use('*', logger());
@@ -88,7 +99,9 @@ export function createApp({ db, voice, enableCors = false, logRequests = false, 
 
   app.route('/api', createVoiceRoutes(voice));
   app.route('/api', createDevicesRoutes(voice));
+  app.route('/api', createDiscoveryRoutes(voice));
   app.route('/api', createSettingsRoutes(voice));
+  app.route('/api', createSetupRoutes(voice, { fetchImpl }));
   app.route('/api', createMcpRoutes(voice));
   app.route('/api', createDoctorRoutes(voice));
 

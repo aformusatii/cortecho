@@ -1,4 +1,5 @@
 import type { DeviceStatus, Health } from '@cortecho/shared';
+import { ProblemFix } from '@/features/setup/components/ProblemFix.tsx';
 import { CONNECTION_LABELS, formatTime, formatUptime, PROBLEM_LABELS } from '../format.ts';
 import { StatusDot } from './StatusDot.tsx';
 
@@ -34,7 +35,10 @@ function EchoCard({ device }: { device: DeviceStatus }) {
         <StatusDot tone={connectionTone[device.state]}>{CONNECTION_LABELS[device.state]}</StatusDot>
       </p>
       {device.problem && (
-        <p className="text-sm font-medium text-destructive">{PROBLEM_LABELS[device.problem]}</p>
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-destructive">{PROBLEM_LABELS[device.problem]}</p>
+          <ProblemFix device={device} />
+        </div>
       )}
       <Row label="Address">{`${device.host}:${device.port}`}</Row>
       <Row label="Link">{device.encryption === 'noise' ? 'Encrypted (API key)' : 'Plaintext'}</Row>

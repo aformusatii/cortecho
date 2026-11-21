@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_SETTINGS, SETTING_DESCRIPTORS, type SettingDescriptor } from '@cortecho/shared';
+import {
+  DEFAULT_SETTINGS,
+  SETTING_BY_KEY,
+  SETTING_DESCRIPTORS,
+  type SettingDescriptor,
+} from '@cortecho/shared';
 import { REPO_ROOT } from '../../env.ts';
 import { createLogger } from '../../lib/logger.ts';
 import { BASE_RULES } from '../../pipeline/prompt-layers.ts';
@@ -40,7 +45,16 @@ export function importSettingsFromEnvironment(
     const value = readEnvValue(descriptor, env[descriptor.env]);
     if (value === undefined) continue;
     if (JSON.stringify(value) === JSON.stringify(descriptor.default)) continue;
-    values[descriptor.key] = value;
+    // A malformed value must not stop the first start: the setting can be fixed
+    // in the UI. (Without this, importValues would throw on it.)
+    const parsed = descriptor.schema.safeParse(value);
+    if (!parsed.success) {
+      log.warn(
+        `ignoring ${descriptor.env} from the environment: ${parsed.error.issues[0]?.message ?? 'invalid value'}`,
+      );
+      continue;
+    }
+    values[descriptor.key] = parsed.data;
   }
 
   let dropped: string[] = [];
@@ -61,19 +75,65 @@ export function importSettingsFromEnvironment(
 }
 
 /** Warns once at start about variables that a settings key now supersedes. */
-export function warnStaleEnvironment(env: NodeJS.ProcessEnv = process.env): void {
-  const stillSet = SETTING_DESCRIPTORS.filter(
-    (descriptor) =>
-      descriptor.env &&
-      // TZ also stays in the environment for the container clock; it only seeds the setting.
-      descriptor.key !== 'assistant.timeZone' &&
-      (env[descriptor.env] ?? '').trim() !== '',
-  ).map((descriptor) => descriptor.env);
+export function warnStaleEnvironment(store: SettingsStore, env: NodeJS.ProcessEnv = process.env): void {
+  const stillSet = SETTING_DESCRIPTORS.filter((descriptor) => {
+    if (!descriptor.env) return false;
+    // TZ also stays in the environment for the container clock; it only seeds the setting.
+    if (descriptor.key === 'assistant.timeZone') return false;
+    if ((env[descriptor.env] ?? '').trim() === '') return false;
+    // The reply address is copied by migrateReplyBaseUrlFromEnvironment *after*
+    // this import; until that copy exists the variable is pending, not ignored.
+    if (descriptor.key === 'network.replyBaseUrl') {
+      return store.storedValues()[descriptor.key] !== undefined;
+    }
+    return true;
+  }).map((descriptor) => descriptor.env);
   if (stillSet.length > 0) {
     log.warn(
       `these environment variables are ignored now (they are settings; see /api/settings): ${stillSet.join(', ')}`,
     );
   }
+}
+
+/**
+ * Upgrade copy for older deployments (spec §8.1). REPLY_AUDIO_BASE_URL used to
+ * be read at every start; `importSettingsFromEnvironment` only runs on an empty
+ * database, so without this a used database would keep an empty setting and the
+ * Echo would play nothing.
+ *
+ * Copies the variable once, through the store (so the settings history records
+ * it), and only while the key was never stored: a later UI edit — including an
+ * explicit empty value — is never overwritten. An invalid value is a warning,
+ * not a refusal to start; the `reply-address-missing` problem and the setup
+ * wizard then lead the owner to fix it.
+ */
+export function migrateReplyBaseUrlFromEnvironment(
+  store: SettingsStore,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  if (store.storedValues()['network.replyBaseUrl'] !== undefined) return null;
+  const raw = (env.REPLY_AUDIO_BASE_URL ?? '').trim();
+  if (!raw) return null;
+
+  const descriptor = SETTING_BY_KEY.get('network.replyBaseUrl');
+  if (!descriptor) return null;
+  const parsed = descriptor.schema.safeParse(raw);
+  if (!parsed.success) {
+    log.warn(
+      `REPLY_AUDIO_BASE_URL is not a usable reply address (${parsed.error.issues[0]?.message ?? 'invalid value'}); not imported`,
+    );
+    return null;
+  }
+
+  try {
+    store.apply({ 'network.replyBaseUrl': parsed.data }, store.version, { source: 'upgrade' });
+  } catch (error) {
+    // Never stop the start for this copy: the setting can still be edited in the UI.
+    log.warn(`could not import the reply address: ${(error as Error).message}`);
+    return null;
+  }
+  log.info('settings: reply address imported from REPLY_AUDIO_BASE_URL');
+  return parsed.data as string;
 }
 
 /**

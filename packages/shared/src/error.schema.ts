@@ -11,6 +11,16 @@ export const API_ERROR_CODES = [
   // The Echo is not connected, or it is in the middle of a voice turn.
   'ECHO_UNAVAILABLE',
   'ECHO_BUSY',
+  // Adding an Echo (spec §7.3/§7.4): nothing answered, or the device is not a voice Echo.
+  'ECHO_UNREACHABLE',
+  'NOT_AN_ECHO',
+  // An Echo that already has a key (another app, or Cortecho with a lost row).
+  'ECHO_KEY_SET',
+  'ECHO_KEY_INVALID',
+  // The address or the MAC is already a device.
+  'ALREADY_ADDED',
+  // Securing the link failed; nothing was changed on the Echo.
+  'ADOPT_FAILED',
   // OpenAI failed or is not configured (no OPENAI_API_KEY).
   'UPSTREAM_ERROR',
   // A settings PATCH carried a stale version (another tab saved first).

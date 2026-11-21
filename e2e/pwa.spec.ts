@@ -1,9 +1,13 @@
 import { expect, test } from '@playwright/test';
-import { waitForStatus } from './helpers.ts';
+import { completeSetup, waitForStatus } from './helpers.ts';
 
 // Installability = a valid manifest + a service worker that controls the
 // page. Runs only in the desktop project (see playwright.config.ts).
 test.describe('PWA', () => {
+  test.beforeEach(async ({ request }) => {
+    await completeSetup(request);
+  });
+
   test.use({ serviceWorkers: 'allow' });
 
   test('has a valid manifest with the required icons', async ({ page, request }) => {

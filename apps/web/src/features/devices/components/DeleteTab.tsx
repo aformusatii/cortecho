@@ -38,7 +38,8 @@ export function DeleteTab({ device }: { device: DeviceStatus }) {
       <h2 className="text-base font-semibold text-destructive">Danger zone</h2>
       <p className="text-sm text-muted-foreground">
         Removing this Echo closes its link and its settings overrides. Its turns stay in the history without
-        an Echo. This cannot be undone.
+        an Echo. The Echo stays secured with this key. To add it again, remove the key on the Echo. This
+        cannot be undone.
       </p>
       <AlertDialog>
         <AlertDialogTrigger asChild>
@@ -50,7 +51,8 @@ export function DeleteTab({ device }: { device: DeviceStatus }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {device.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The link closes now. To use this Echo again you must add it again with its address and key.
+              The link closes now. The Echo stays secured with this key. To add it again, remove the key on
+              the Echo.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

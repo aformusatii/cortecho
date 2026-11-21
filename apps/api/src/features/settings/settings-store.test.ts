@@ -39,6 +39,28 @@ describe('SettingsStore', () => {
     expect(ctx.settings.storedValues()).toEqual({ 'tts.voice': 'cedar', 'vad.endSilenceMs': 600 });
   });
 
+  it('stores the reply address trimmed, and keeps an explicit empty value', () => {
+    ctx.settings.apply({ 'network.replyBaseUrl': 'http://192.168.1.10:3000/' }, 0);
+    expect(ctx.settings.storedValues()['network.replyBaseUrl']).toBe('http://192.168.1.10:3000');
+    expect(ctx.settings.history(1)[0]).toMatchObject({
+      key: 'network.replyBaseUrl',
+      oldValue: null,
+      newValue: 'http://192.168.1.10:3000',
+    });
+
+    // Not collapsed to "the default" (deleted): the upgrade copy must never
+    // resurrect an old REPLY_AUDIO_BASE_URL after the owner cleared it.
+    const cleared = ctx.settings.apply({ 'network.replyBaseUrl': '' }, 1);
+    expect(cleared.settings.network.replyBaseUrl).toBe('');
+    expect(ctx.settings.storedValues()).toHaveProperty('network.replyBaseUrl', '');
+    const same = ctx.settings.apply({ 'network.replyBaseUrl': '' }, 2);
+    expect(same.version).toBe(2);
+
+    // A reset (null) still goes back to the default and deletes the row.
+    ctx.settings.apply({ 'network.replyBaseUrl': null }, 2);
+    expect(ctx.settings.storedValues()).not.toHaveProperty('network.replyBaseUrl');
+  });
+
   it('resets a key to the default with null and does not bump a no-op batch', () => {
     ctx.settings.apply({ 'tts.voice': 'cedar' }, 0);
     const reset = ctx.settings.apply({ 'tts.voice': null }, 1);

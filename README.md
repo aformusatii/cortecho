@@ -101,7 +101,8 @@ Echo's clock.
   LAN (see [Echo setup](docs/echo-setup.md)).
 - A machine with Docker on that LAN, and a free port (default `3000`).
 - An OpenAI API key, or an OpenAI-compatible server (see
-  [configuration](docs/configuration.md#1-environment-only)).
+  [configuration](docs/configuration.md#1-environment-only)); the key is
+  entered in the UI during setup.
 - A little disk space for the image; the SQLite database is small.
 
 ## Quick start
@@ -109,20 +110,29 @@ Echo's clock.
 ```bash
 mkdir cortecho && cd cortecho
 curl -O https://raw.githubusercontent.com/aformusatii/cortecho/main/docker-compose.yml
-curl -o cortecho.env https://raw.githubusercontent.com/aformusatii/cortecho/main/cortecho.env.example
-# edit cortecho.env: ECHO_HOST, OPENAI_API_KEY, REPLY_AUDIO_BASE_URL, TZ
 docker compose up -d
-docker compose exec app cortecho doctor
 ```
 
-Then open `http://<docker-host>:3000/settings` and finish the settings (models,
-voice, languages, time zone, locale). Say the wake word and ask "What time is
-it?".
+Then open `http://<this-computer>:3000` and follow **Setup**. Cortecho finds
+the Echo on your network, secures the connection with a key only Cortecho
+knows, plays a sound on it and asks which room it is in. Say the wake word and
+ask "What time is it?".
 
-> **Important:** the first start imports `cortecho.env` into `data/app.db`.
-> Afterwards the database is the source of truth; changing behaviour settings
-> in that file does nothing. Edit them in the UI. Only
-> `REPLY_AUDIO_BASE_URL` and `OPENAI_BASE_URL` are read on every start.
+No file needs editing: the compose file works as downloaded, and the time
+zone, the OpenAI key and the reply address are set in the UI. For the few
+things that cannot be settings (an OpenAI-compatible server, connectors), copy
+[`cortecho.env.example`](cortecho.env.example) to `cortecho.env` next to the
+compose file and set only what you need. See [deployment](docs/deployment.md)
+and [configuration](docs/configuration.md).
+
+<!-- TODO: screenshot of the Discovered card on the Echos page (Add / Ignore),
+     once docs/screenshots has one with the card itself, not the open dialog. -->
+
+> **Important:** behaviour settings live in `data/app.db` and are edited in the
+> UI (Settings, Echos, Setup). An environment file is imported into the
+> database only on a fresh start; changing those values later does nothing.
+> Only `OPENAI_BASE_URL`, `PUBLIC_BASE_URL`, `CORTECHO_SECRET_KEY`,
+> `DISCOVERY_EXTRA_TARGETS` and the tool/MCP variables are read on every start.
 
 Building from source instead:
 

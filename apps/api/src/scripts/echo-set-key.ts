@@ -8,27 +8,20 @@
  * sends it to the Echo, writes ECHO_API_KEY into the env file (mode 0600) and
  * never prints it. Then add the same key on the Echo's Connection tab.
  *
- * It connects with Noise and the all-zero PSK (what hassmic accepts while it
- * has no key), sends NoiseEncryptionSetKeyRequest and prints the answer.
- * hassmic stores the key in state/api_key; from then on only clients with
- * that key get in, and it takes their time for its clock.
+ * The handshake lives in esphome/adopt.ts, shared with the web adoption flow
+ * (spec §7.1 S5). It connects with Noise and the all-zero PSK (what hassmic
+ * accepts while it has no key) and sends NoiseEncryptionSetKeyRequest; hassmic
+ * stores the key in state/api_key. From then on only clients with that key get
+ * in, and it takes their time for its clock.
  *
  * This CHANGES THE ECHO. Undo: delete /data/local/hassmic/state/api_key on the
  * Echo and restart hassmic (`stop hassmic; start hassmic`).
  */
 import { randomBytes } from 'node:crypto';
-import net from 'node:net';
 import path from 'node:path';
 import { REPO_ROOT } from '../env.ts';
-import { encodeNoiseFrame, NoiseFrameReader, NoiseTransportCodec } from '../esphome/framing.ts';
-import {
-  decodeHelloResponse,
-  decodeSetKeyResponse,
-  encodeHelloRequest,
-  encodeSetKeyRequest,
-  MSG,
-} from '../esphome/messages.ts';
-import { NoiseInitiator, parseApiKey } from '../esphome/noise.ts';
+import { setKeyOnUnkeyedEcho } from '../esphome/adopt.ts';
+import { parseApiKey } from '../esphome/noise.ts';
 import { writeEnvFile } from './env-file.ts';
 
 function option(name: string): string | undefined {
@@ -54,74 +47,39 @@ written to the env file. This changes the Echo.`);
 const keyText = providedKey || randomBytes(32).toString('base64');
 parseApiKey(keyText); // validates; throws on a bad key
 
-const socket = net.createConnection({ host, port });
-socket.setTimeout(10_000, () => fail('timed out'));
-
 function fail(message: string): never {
   console.error(`echo-set-key: ${message}`);
-  socket.destroy();
   process.exit(1);
 }
 
-const initiator = new NoiseInitiator(Buffer.alloc(32));
-const reader = new NoiseFrameReader();
-let frames = 0;
-let codec: NoiseTransportCodec | null = null;
+const outcome = await setKeyOnUnkeyedEcho({
+  host,
+  port,
+  key: keyText,
+  clientInfo: 'echo-set-key',
+  onHello: (name) => console.log(`connected to ${name}; sending the key`),
+});
 
-socket.on('connect', () => {
-  const msg1 = initiator.writeMessage1();
-  socket.write(
-    Buffer.concat([
-      encodeNoiseFrame(Buffer.alloc(0)),
-      encodeNoiseFrame(Buffer.concat([Buffer.from([0]), msg1])),
-    ]),
+if (outcome === 'refused') {
+  fail(
+    'the Echo refused the key: it already has one (or rejected this one). ' +
+      'Delete state/api_key on the Echo first if you want to replace it.',
   );
-});
+}
+if (outcome === 'unreachable') {
+  fail(`no encrypted link to ${host}:${port}: nothing was sent.`);
+}
+if (outcome === 'lost') {
+  fail(
+    'the Echo did not answer after the key was sent: it may have stored it. ' +
+      'Check the Echo, then try to connect before running this again.',
+  );
+}
 
-socket.on('data', (chunk) => {
-  try {
-    const messages = codec ? codec.push(chunk) : [];
-    if (!codec) {
-      for (const frame of reader.push(chunk)) {
-        frames += 1;
-        if (frames === 1) continue; // server hello
-        if (codec) {
-          messages.push((codec as NoiseTransportCodec).decodeFrame(frame));
-          continue;
-        }
-        if (frame[0] !== 0) {
-          fail(
-            `the Echo refused the zero key (${frame.subarray(1).toString('utf8')}): it already has a key. ` +
-              'Delete state/api_key on the Echo first if you want to replace it.',
-          );
-        }
-        const { transport } = initiator.readMessage2(frame.subarray(1));
-        codec = new NoiseTransportCodec(transport.send, transport.receive);
-        socket.write(codec.encode(MSG.HELLO_REQUEST, encodeHelloRequest('echo-set-key')));
-      }
-    }
-    for (const { type, payload } of messages) {
-      if (type === MSG.HELLO_RESPONSE && codec) {
-        console.log(`connected to ${decodeHelloResponse(payload).name}; sending the key`);
-        socket.write(codec.encode(MSG.NOISE_ENCRYPTION_SET_KEY_REQUEST, encodeSetKeyRequest(keyText)));
-      } else if (type === MSG.NOISE_ENCRYPTION_SET_KEY_RESPONSE) {
-        const { success } = decodeSetKeyResponse(payload);
-        if (!success) fail('the Echo refused the key (see its boot.log: "encryption: ...")');
-        if (!providedKey) writeEnvFile(envFile, 'ECHO_API_KEY', keyText);
-        console.log(
-          `the Echo stored the key: only encrypted connections with it from now on. ` +
-            (providedKey
-              ? 'The key was provided, so no file was written.'
-              : `It was written to ${envFile} (mode 0600) and is never printed here.`),
-        );
-        socket.end();
-        process.exit(0);
-      }
-    }
-  } catch (error) {
-    fail(error instanceof Error ? error.message : String(error));
-  }
-});
-
-socket.on('error', (error) => fail(error.message));
-socket.on('close', () => fail('the Echo closed the connection'));
+if (!providedKey) writeEnvFile(envFile, 'ECHO_API_KEY', keyText);
+console.log(
+  `the Echo stored the key: only encrypted connections with it from now on. ` +
+    (providedKey
+      ? 'The key was provided, so no file was written.'
+      : `It was written to ${envFile} (mode 0600) and is never printed here.`),
+);

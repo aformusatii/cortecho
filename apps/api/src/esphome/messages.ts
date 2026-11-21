@@ -180,6 +180,8 @@ export function decodeDeviceInfo(data: Buffer): DeviceInfo {
     friendlyName: m.string(13),
     voiceAssistantFeatureFlags: m.uint(17),
     apiEncryptionSupported: m.bool(19),
+    // Only sent while the Echo has no key; absent on a keyed Echo.
+    provisionable: m.bool(26) || undefined,
   };
 }
 

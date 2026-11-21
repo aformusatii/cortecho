@@ -20,7 +20,7 @@ ESPHome assist satellite.
 | 4b | app → Echo | `STT_VAD_END` | Mic off, ring → thinking |
 | 5 | app → Echo | `STT_END{text}`, `INTENT_START` | After transcription, which already started 300 ms into the closing pause (see [performance](performance.md)). Nothing usable → `ERROR{code:"stt-no-text-recognized"}` + `RUN_END`: quiet end |
 | 6 | app | agent, then TTS | Responses API with tools, streamed; TTS starts on the first sentence while the agent writes the rest. The whole answer and the first audio are awaited |
-| 7 | app → Echo | `INTENT_END{continue_conversation}`, `TTS_START{text}`, `TTS_END{url}`, `RUN_END` | `url` = `REPLY_AUDIO_BASE_URL/api/reply-audio/<random id>.wav` |
+| 7 | app → Echo | `INTENT_END{continue_conversation}`, `TTS_START{text}`, `TTS_END{url}`, `RUN_END` | `url` = the **Reply address** (`network.replyBaseUrl`, Settings → Network) + `/api/reply-audio/<random id>.wav` |
 | 8 | Echo → app | `GET <url>` | A WAV (24 kHz) that streams while speech is still generated |
 | 9 | Echo → app | `VoiceAssistantAnnounceFinished` | hassmic plays replies like announcements: playback is over, the turn ends |
 | 10 | Echo → app | `VoiceAssistantRequest{start}` again | Only after `continue_conversation=1`: the wake sound plays, then it listens without the wake word |
