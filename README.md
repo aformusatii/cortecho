@@ -111,9 +111,38 @@ while the rest is still being generated. Every message is in
 
 ## Quick start
 
+### Run with Docker Compose
+
+On the machine that will run Cortecho, create a folder for the app.
+
 ```bash
 mkdir cortecho && cd cortecho
-curl -O https://raw.githubusercontent.com/aformusatii/cortecho/main/docker-compose.yml
+mkdir data
+```
+
+Save the following as `docker-compose.yml` inside the `cortecho` folder, or
+download the [ready-made Compose file](https://raw.githubusercontent.com/aformusatii/cortecho/main/docker-compose.yml).
+
+```yaml
+services:
+  app:
+    image: ghcr.io/aformusatii/cortecho:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - path: ./cortecho.env
+        required: false
+    restart: unless-stopped
+    stop_grace_period: 15s
+```
+
+Cortecho keeps your settings and paired Echos in `./data`. The container runs
+as UID 1000, so that user needs write access to the folder. Start the app from
+the same directory.
+
+```bash
 docker compose up -d
 ```
 
@@ -138,7 +167,7 @@ and [configuration](docs/configuration.md).
 > Only `OPENAI_BASE_URL`, `PUBLIC_BASE_URL`, `CORTECHO_SECRET_KEY`,
 > `DISCOVERY_EXTRA_TARGETS` and the tool/MCP variables are read on every start.
 
-Building from source instead:
+### Run from source
 
 ```bash
 git clone https://github.com/aformusatii/cortecho.git && cd cortecho
