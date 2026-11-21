@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { SPOKEN_TIME } from '../harness/matchers.ts';
 import { useSmokeEcho } from '../harness/smoke-echo.ts';
 
 // The wake word during a reply (hassmic main.c, local wake while SPEAKING):
@@ -17,7 +18,8 @@ describe('barge-in during a reply', () => {
     expect(second.echoLog).toContain('barge-in');
     expect(second.turn?.transcript ?? '').toMatch(/time/i);
     expect(second.turn?.outcome).toBe('answered');
-    expect(second.said).toHaveSaidOnce(/\b\d{1,2}[:.]\d{2}\b/);
+    expect(second.said).toHaveSaidOnce(SPOKEN_TIME);
+    expect(second.turn?.reply ?? '').toMatch(SPOKEN_TIME);
     expect(second.errorSound).toBe(false);
   });
 });

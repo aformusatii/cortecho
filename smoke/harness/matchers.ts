@@ -17,6 +17,28 @@ beforeEach(({ task }) => {
  * `setupFiles`, so every scenario has them.
  */
 
+const ONES = 'one|two|three|four|five|six|seven|eight|nine';
+const TEENS = 'ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen';
+const TENS = 'twenty|thirty|forty|fifty';
+const MINUTE_WORDS = `oh[-\\s](?:${ONES})|(?:${TENS})(?:[-\\s](?:${ONES}))?|(?:${TEENS})`;
+const HOUR_WORDS = `(?:${ONES}|${TEENS}|${TENS})(?:[-\\s](?:${ONES}))?`;
+const CLOCK_WORD = `(?:half|quarter|(?:${MINUTE_WORDS}))\\s+(?:past|to)\\s+${HOUR_WORDS}`;
+const SPOKEN_HHMM = `${HOUR_WORDS}\\s+(?:${MINUTE_WORDS})`;
+const HOUR_OCLOCK = `(?:${HOUR_WORDS})\\s+o['’]?clock`;
+
+/**
+ * A time of day as the transcription of the played reply may render it. The
+ * reply text says "20:12", but speech-to-text hears digits ("8.10"), four
+ * digits as HHMM ("It's 2012"), or number words ("twenty ten", "eight oh
+ * five", "half past eight", "ten past eight", "twelve o'clock"), with or
+ * without am/pm or "in the evening".
+ */
+export const SPOKEN_TIME = new RegExp(
+  `\\b(?:(?:\\d{1,2}[:.]\\d{2})|(?:[01]\\d|2[0-3])[0-5]\\d|${CLOCK_WORD}|${SPOKEN_HHMM}|${HOUR_OCLOCK})\\b` +
+    `(?:\\s*(?:a\\.?m\\.?|p\\.?m\\.?|in the (?:morning|afternoon|evening|night)))?`,
+  'i',
+);
+
 /** A `said` transcript lives on a turn observation, or is passed as a string. */
 function saidOf(received: unknown): string | null {
   if (typeof received === 'string') return received;
