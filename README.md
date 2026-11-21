@@ -76,24 +76,28 @@ is done once.
 
 ## How it works
 
-```
- "Computer, what time is it?"
-        │
- ┌──────▼───────────────┐  ESPHome API, TCP :26053, Noise  ┌───────────────────────────────┐
- │ Echo Dot (hassmic)   │◄────────────────────────────────►│ Cortecho (Node 24, Docker)    │
- │ wake word, mic,      │  VoiceAssistantRequest/Audio →   │  esphome/  Noise, framing,    │
- │ end of speech, ring, │  ← pipeline events, TTS_END url  │            client             │
- │ speaker, clock       │  ← GetTimeResponse, Announce     │  pipeline/ STT → agent → TTS  │──► OpenAI API
- │ 192.168.1.50         │                                  │  tools/    function calling   │
- └──────┬───────────────┘   GET /api/reply-audio/<id>.wav  │  http      status, API, audio │◄── browser
-        └─────────────────────────────────────────────────►└───────────────────────────────┘
-   the Echo is the server,                                  192.168.1.10:3000
-   Cortecho is its only voice assistant client
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/diagrams/architecture-dark.svg">
+  <img src="docs/img/diagrams/architecture-light.svg" alt="How Cortecho works: you ask a rooted Echo Dot a question; it streams the audio over the encrypted ESPHome API to Cortecho on your network, which listens, transcribes, thinks with your tools and MCP connectors, speaks through an OpenAI-compatible API, and hands the Echo a reply it plays." width="100%">
+</picture>
 
-The Echo is the server; Cortecho is its only voice assistant client. The link
+The Echo keeps what Amazon does well (the microphones, the audio processing,
+the wake word, the speaker) and loses the Amazon cloud. `hassmic` on the Echo
+is an ESPHome server; Cortecho is its only voice assistant client. The link
 is encrypted with the Echo's API key (Noise), which also lets Cortecho set the
-Echo's clock.
+Echo's clock. One Cortecho serves every Echo in the house.
+
+### One turn, step by step
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/diagrams/turn-sequence-dark.svg">
+  <img src="docs/img/diagrams/turn-sequence-light.svg" alt="Sequence diagram of one voice turn: connect, listen until 800 ms of silence, transcribe, run the agent and an MCP tool, stream text to speech from the first sentence, the Echo downloads and plays the reply, and listens again without the wake word when the agent asks a follow-up question." width="100%">
+</picture>
+
+Cortecho ends listening itself, transcribes while you finish the sentence,
+and starts speaking from the first sentence of the answer, so the reply plays
+while the rest is still being generated. Every message is in
+[How a turn works](docs/protocol.md).
 
 ## What you need
 
