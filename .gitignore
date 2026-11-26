@@ -40,7 +40,7 @@ setup.md
 refactoring_prompt.md
 claude_runner_prompt.md
 AGENTS.local.md
-specs/
+/specs/
 # Copier answers hold personal values and must not be edited by hand; the
 # public tree leaves the file out instead (see AGENTS.md "Template updates").
 .copier-answers.yml
