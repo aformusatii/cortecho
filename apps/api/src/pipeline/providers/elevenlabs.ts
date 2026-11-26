@@ -1,0 +1,276 @@
+import type {
+  ElevenLabsModelsResponse,
+  ElevenLabsVoicesResponse,
+  ProviderKeyCheckResult,
+  ProviderListReason,
+  Settings,
+} from '@cortecho/shared';
+import { pcmToWav } from '../audio.ts';
+import { type ElevenLabsVoiceProvider, NotConfiguredError, PCM_SAMPLE_RATE } from '../services.ts';
+
+export const ELEVENLABS_BASE_URL = 'https://api.elevenlabs.io';
+/** ElevenLabs' `speed` range for TTS voice settings. */
+const SPEED_MIN = 0.7;
+const SPEED_MAX = 1.2;
+
+/** Only ever a hard-coded host; the key is never logged or put in an error. */
+type RequestOptions = {
+  apiKey: string;
+  fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
+
+function keyOf(settings: Settings): string {
+  const key = settings.elevenlabs.apiKey;
+  if (!key) throw new NotConfiguredError('elevenlabs');
+  return key;
+}
+
+/** The abort signal for one request: the caller's signal plus the settings' timeout. */
+function requestSignal(signal: AbortSignal, timeoutMs: number): AbortSignal {
+  return AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
+}
+
+/** A scoped key authenticates but lacks the read permission for a list. */
+function listFailureReason(status: number, detail: unknown): ProviderListReason {
+  if (status === 401 || status === 403) {
+    const body = detail as { detail?: { status?: unknown } } | null;
+    if (body?.detail?.status === 'missing_permissions') return 'missing-permission';
+  }
+  return 'unavailable';
+}
+
+async function failureDetail(response: Response): Promise<unknown> {
+  return response.json().catch(() => null);
+}
+
+function httpError(action: string, status: number): Error {
+  const hint =
+    status === 401 || status === 403 ? ' Check the ElevenLabs API key in Settings → Providers.' : '';
+  return new Error(`ElevenLabs ${action} failed (HTTP ${status}).${hint}`);
+}
+
+function clampedSpeed(speed: number): number {
+  return Math.min(SPEED_MAX, Math.max(SPEED_MIN, speed));
+}
+
+/**
+ * The ElevenLabs account's voices, with the names and labels the picker shows.
+ * An empty list carries the reason, so the UI can say why (no key, a scoped
+ * key, or an unreachable provider) instead of blaming the key.
+ */
+export async function listElevenLabsVoices({
+  apiKey,
+  fetchImpl = fetch,
+  signal = new AbortController().signal,
+  timeoutMs = 5000,
+}: RequestOptions): Promise<ElevenLabsVoicesResponse> {
+  try {
+    const response = await fetchImpl(`${ELEVENLABS_BASE_URL}/v2/voices`, {
+      headers: { 'xi-api-key': apiKey, Accept: 'application/json' },
+      signal: requestSignal(signal, timeoutMs),
+    });
+    if (!response.ok) {
+      const reason = listFailureReason(response.status, await failureDetail(response));
+      return { voices: [], reason };
+    }
+    const body = (await response.json()) as {
+      voices?: {
+        voice_id?: unknown;
+        name?: unknown;
+        category?: unknown;
+        description?: unknown;
+        preview_url?: unknown;
+        labels?: Record<string, unknown>;
+      }[];
+    };
+    const label = (value: unknown): string | undefined =>
+      typeof value === 'string' && value !== '' ? value : undefined;
+    return {
+      voices: (body.voices ?? [])
+        .filter((voice) => typeof voice.voice_id === 'string' && typeof voice.name === 'string')
+        .map((voice) => ({
+          id: voice.voice_id as string,
+          name: voice.name as string,
+          ...(label(voice.category) ? { category: label(voice.category) } : {}),
+          ...(label(voice.labels?.accent) ? { accent: label(voice.labels?.accent) } : {}),
+          ...(label(voice.labels?.gender) ? { gender: label(voice.labels?.gender) } : {}),
+          ...((label(voice.description) ?? label(voice.labels?.description))
+            ? { description: label(voice.description) ?? label(voice.labels?.description) }
+            : {}),
+          ...(label(voice.preview_url) ? { previewUrl: label(voice.preview_url) } : {}),
+        })),
+    };
+  } catch {
+    return { voices: [], reason: 'unavailable' };
+  }
+}
+
+/** The account's models; the web UI filters the text-to-speech ones. */
+export async function listElevenLabsModels({
+  apiKey,
+  fetchImpl = fetch,
+  signal = new AbortController().signal,
+  timeoutMs = 5000,
+}: RequestOptions): Promise<ElevenLabsModelsResponse> {
+  try {
+    const response = await fetchImpl(`${ELEVENLABS_BASE_URL}/v1/models`, {
+      headers: { 'xi-api-key': apiKey, Accept: 'application/json' },
+      signal: requestSignal(signal, timeoutMs),
+    });
+    if (!response.ok) {
+      const reason = listFailureReason(response.status, await failureDetail(response));
+      return { models: [], reason };
+    }
+    const body = (await response.json()) as {
+      model_id?: unknown;
+      name?: unknown;
+      can_do_text_to_speech?: unknown;
+    }[];
+    return {
+      models: body
+        .filter((model) => typeof model.model_id === 'string')
+        .map((model) => ({
+          id: model.model_id as string,
+          name: typeof model.name === 'string' ? model.name : (model.model_id as string),
+          canDoTextToSpeech: model.can_do_text_to_speech === true,
+        })),
+    };
+  } catch {
+    return { models: [], reason: 'unavailable' };
+  }
+}
+
+/** The permission name in an authentication_error body, if it names one. */
+function missingPermission(detail: unknown, fallback: string): string {
+  const body = detail as { detail?: { status?: unknown; message?: unknown } } | null;
+  const message = typeof body?.detail?.message === 'string' ? body.detail.message : '';
+  return /permission (\w+)/.exec(message)?.[1] ?? fallback;
+}
+
+/**
+ * "Test key": probe the voices and models endpoints. A scoped key (most
+ * ElevenLabs keys) authenticates and answers 401 `missing_permissions` for a
+ * list it may not read; that is a working key for speech, so `ok` stays true
+ * and the permission names are reported. Only an authentication failure
+ * without `missing_permissions` is a rejected key.
+ */
+export async function checkElevenLabsKey({
+  apiKey,
+  fetchImpl = fetch,
+  timeoutMs = 5000,
+}: Omit<RequestOptions, 'signal'>): Promise<ProviderKeyCheckResult> {
+  const key = apiKey.trim();
+  if (key === '') return { ok: false, code: 'rejected' };
+  const probes = [
+    { path: '/v2/voices?page_size=1', permission: 'voices_read' },
+    { path: '/v1/models', permission: 'models_read' },
+  ];
+  const missing = new Set<string>();
+  let authenticated = false;
+  for (const probe of probes) {
+    let response: Response;
+    try {
+      response = await fetchImpl(`${ELEVENLABS_BASE_URL}${probe.path}`, {
+        headers: { 'xi-api-key': key, Accept: 'application/json' },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch {
+      return { ok: false, code: 'unreachable' };
+    }
+    if (response.ok) {
+      authenticated = true;
+      void response.body?.cancel().catch(() => {});
+      continue;
+    }
+    if (response.status === 401 || response.status === 403) {
+      const detail = await failureDetail(response);
+      const body = detail as { detail?: { status?: unknown } } | null;
+      if (body?.detail?.status === 'missing_permissions') {
+        authenticated = true;
+        missing.add(missingPermission(detail, probe.permission));
+        continue;
+      }
+      return { ok: false, code: 'rejected' };
+    }
+    void response.body?.cancel().catch(() => {});
+    return { ok: false, code: 'unreachable' };
+  }
+  if (!authenticated) return { ok: false, code: 'unreachable' };
+  return missing.size > 0 ? { ok: true, missingPermissions: [...missing] } : { ok: true };
+}
+
+/** The ElevenLabs-backed audio stages: plain fetch, same 24 kHz PCM as OpenAI. */
+export function createElevenLabsProvider(): ElevenLabsVoiceProvider {
+  return {
+    async transcribe(pcm, sampleRate, signal, current) {
+      const key = keyOf(current);
+      const model = current.stt.elevenlabsModel;
+      const form = new FormData();
+      form.append(
+        'file',
+        new Blob([new Uint8Array(pcmToWav(pcm, sampleRate))], { type: 'audio/wav' }),
+        'utterance.wav',
+      );
+      form.append('model_id', model);
+      const languages = current.stt.languages;
+      const first = languages[0];
+      if (first) form.append('language_code', first);
+      // Secondary languages exist only on Scribe v3; v2 takes a single hint.
+      if (model === 'scribe_v3') {
+        for (const language of languages.slice(1)) form.append('secondary_language_codes', language);
+      }
+      const response = await fetch(`${ELEVENLABS_BASE_URL}/v1/speech-to-text`, {
+        method: 'POST',
+        headers: { 'xi-api-key': key },
+        body: form,
+        signal: requestSignal(signal, current.elevenlabs.timeoutMs),
+      });
+      if (!response.ok) throw httpError('speech-to-text', response.status);
+      const body = (await response.json()) as { text?: unknown };
+      return typeof body.text === 'string' ? body.text.trim() : '';
+    },
+
+    sampleRate: PCM_SAMPLE_RATE,
+    async *synthesize(text, signal, current) {
+      const key = keyOf(current);
+      const response = await fetch(
+        `${ELEVENLABS_BASE_URL}/v1/text-to-speech/${encodeURIComponent(
+          current.tts.elevenlabsVoiceId,
+        )}/stream?output_format=pcm_24000`,
+        {
+          method: 'POST',
+          headers: { 'xi-api-key': key, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text,
+            model_id: current.tts.elevenlabsModel,
+            voice_settings: {
+              stability: current.tts.elevenlabsStability,
+              speed: clampedSpeed(current.tts.speed),
+            },
+          }),
+          signal: requestSignal(signal, current.elevenlabs.timeoutMs),
+        },
+      );
+      if (!response.ok) throw httpError('text-to-speech', response.status);
+      if (!response.body) throw new Error('ElevenLabs TTS response has no body');
+      for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+        yield Buffer.from(chunk);
+      }
+    },
+
+    configured: (current) => Boolean(current.elevenlabs.apiKey),
+    warmUp: (current) => {
+      if (!current.elevenlabs.apiKey) return;
+      // Open the TLS connection only: /v1/user would need user_read, which a
+      // scoped key may not have even though speech works.
+      fetch(`${ELEVENLABS_BASE_URL}/`, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(5000),
+      })
+        .then((response) => response.body?.cancel())
+        .catch(() => {});
+    },
+  };
+}

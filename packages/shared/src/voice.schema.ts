@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { DeviceStatus } from './device.schema.ts';
+import { VOICE_PROVIDERS, type VoiceProvider } from './settings.registry.ts';
 
 // ---------------------------------------------------------------------------
 // The contract between the API and the status page: health, turns, and the
@@ -19,9 +20,17 @@ const deviceIdField = z.number().int().positive();
 
 /** The voice form's "play a test phrase": previews values without saving them. */
 export const voicePreviewSchema = z.object({
+  /** The draft provider; absent = the saved one. */
+  provider: z.enum(VOICE_PROVIDERS).optional(),
+  /** The OpenAI voice and model. */
   voice: z.string().min(1).max(50).optional(),
+  model: z.string().min(1).max(100).optional(),
   speed: z.number().min(0.5).max(2).optional(),
   instructions: z.string().max(1000).optional(),
+  /** The ElevenLabs voice, model and stability. */
+  elevenlabsVoiceId: z.string().min(1).max(100).optional(),
+  elevenlabsModel: z.string().min(1).max(100).optional(),
+  elevenlabsStability: z.number().min(0).max(1).optional(),
 });
 export type VoicePreview = z.infer<typeof voicePreviewSchema>;
 
@@ -156,12 +165,27 @@ export const ECHO_PROBLEMS = [
 ] as const;
 export type EchoProblem = (typeof ECHO_PROBLEMS)[number];
 
+/** One AI stage as the status page shows it. */
+export type HealthStage = {
+  provider: VoiceProvider;
+  /** The model (or voice) the stage uses. */
+  model: string;
+  /** The key this stage's provider needs is set. */
+  configured: boolean;
+};
+
 export type Health = {
   status: 'ok';
   uptimeSeconds: number;
   /** One entry per known Echo; disabled ones show state 'disabled'. */
   devices: DeviceStatus[];
   openai: { configured: boolean; sttModel: string; agentModel: string; ttsModel: string };
+  /** The provider each audio stage and thinking use right now. */
+  providers: {
+    stt: HealthStage;
+    thinking: HealthStage & { provider: 'openai' };
+    tts: HealthStage;
+  };
   tools: string[];
   /** One entry per configured connector, for the status page. */
   connectors: import('./mcp.schema.ts').McpHealthEntry[];

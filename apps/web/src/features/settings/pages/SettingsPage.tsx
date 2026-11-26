@@ -5,7 +5,6 @@ import {
   SETTINGS_SECTION_LABELS,
   type SectionId,
   type SettingsDocument,
-  type VoicePreview,
 } from '@cortecho/shared';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearch } from '@tanstack/react-router';
@@ -23,59 +22,86 @@ import { TestSoundButton } from '@/features/setup/components/TestSoundButton.tsx
 import { isApiError } from '@/lib/api-client.ts';
 import { useMediaQuery } from '@/lib/use-media-query.ts';
 import { useSaveSettings } from '../api/settings.mutations.ts';
-import { openaiModelsQueryOptions, settingsQueryOptions } from '../api/settings.queries.ts';
+import {
+  elevenLabsModelsQueryOptions,
+  elevenLabsVoicesQueryOptions,
+  openaiModelsQueryOptions,
+  settingsQueryOptions,
+} from '../api/settings.queries.ts';
 import { FullPromptDialog } from '../components/FullPromptDialog.tsx';
+import { ProvidersPanel } from '../components/ProvidersPanel.tsx';
 import { SaveBar } from '../components/SaveBar.tsx';
 import { SettingsHistoryDialog } from '../components/SettingsHistoryDialog.tsx';
 import { type OverriddenNote, SettingsSection } from '../components/SettingsSection.tsx';
 import { SettingsTabs } from '../components/SettingsTabs.tsx';
+import { VoicePipeline } from '../components/VoicePipeline.tsx';
 import { VoiceTestPhrase } from '../components/VoiceTestPhrase.tsx';
-import { changedKeys, descriptorsOfSection, type FormValues, focusField, validateForm } from '../draft.ts';
+import {
+  changedKeys,
+  descriptorsOfSection,
+  type FormValues,
+  focusField,
+  validateForm,
+  voicePreviewFrom,
+} from '../draft.ts';
+
+type SettingsTab = 'general' | 'providers';
 
 /**
- * `/settings?tab=general|connectors`. General is the versioned settings
- * document (save bar, history, conflict flow); Connectors is a runtime page
- * where each connector saves on its own.
+ * `/settings?tab=general|providers|connectors`. General and Providers are the
+ * same versioned settings document (save bar, history, 409 flow); the tab only
+ * chooses which sections are rendered. Connectors is a runtime page.
  */
 export function SettingsPage() {
   const search = useSearch({ from: '/settings' });
-  const navigate = useNavigate();
 
   if (search.tab === 'connectors') {
-    return (
-      <div className="space-y-6">
-        <header>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Settings</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Connected services the voice agent may use. Changes apply from the next request.
-          </p>
-        </header>
-        <SettingsTabs />
-        <ConnectorsTab
-          serverId={search.server}
-          auth={search.auth as 'ok' | 'error' | undefined}
-          reason={search.reason}
-          onConsumed={() => void navigate({ to: '/settings', search: { tab: 'connectors' }, replace: true })}
-        />
-      </div>
-    );
+    return <ConnectorsSettings />;
   }
 
-  return <GeneralSettings />;
+  return <SettingsDocumentForm tab={search.tab === 'providers' ? 'providers' : 'general'} />;
+}
+
+function ConnectorsSettings() {
+  const search = useSearch({ from: '/settings' });
+  const navigate = useNavigate();
+  return (
+    <div className="space-y-6">
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Settings</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Connected services the voice agent may use. Changes apply from the next request.
+        </p>
+      </header>
+      <SettingsTabs />
+      <ConnectorsTab
+        serverId={search.server}
+        auth={search.auth as 'ok' | 'error' | undefined}
+        reason={search.reason}
+        onConsumed={() => void navigate({ to: '/settings', search: { tab: 'connectors' }, replace: true })}
+      />
+    </div>
+  );
 }
 
 /**
  * The global settings: every descriptor rendered from the registry, one
  * versioned document, a sticky save bar, and a 409 flow that keeps the unsaved
- * values and offers to reapply them.
+ * values and offers to reapply them. The draft lives above the tab switch, so
+ * moving General ↔ Providers keeps unsaved edits.
  */
-function GeneralSettings() {
+function SettingsDocumentForm({ tab }: { tab: SettingsTab }) {
   const settings = useQuery(settingsQueryOptions());
   const devices = useQuery(devicesQueryOptions());
   const models = useQuery(openaiModelsQueryOptions());
+  const document = settings.data;
+  const hasElevenLabsKey = document?.hasKeys['elevenlabs.apiKey'] === true;
+  const elevenLabsVoices = useQuery(elevenLabsVoicesQueryOptions(hasElevenLabsKey));
+  const elevenLabsModels = useQuery(elevenLabsModelsQueryOptions(hasElevenLabsKey));
   const save = useSaveSettings();
   const reconnect = useReconnectDevice();
   const isPhone = !useMediaQuery('(min-width: 1024px)');
+  const navigate = useNavigate();
 
   const [draft, setDraft] = useState<FormValues | null>(null);
   const [baseline, setBaseline] = useState<FormValues | null>(null);
@@ -83,9 +109,9 @@ function GeneralSettings() {
   const [conflictVersion, setConflictVersion] = useState<number | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
+  const [pendingSection, setPendingSection] = useState<string | null>(null);
   const seededVersion = useRef<number | null>(null);
   const awaitingConflict = useRef(false);
-  const document = settings.data;
 
   // Seed once; after a 409 the refetched values become the new baseline but
   // the owner's unsaved draft is kept so it can be reapplied.
@@ -125,20 +151,22 @@ function GeneralSettings() {
     return result;
   }, [deviceList, deviceDocuments]);
 
+  const voiceNames = useMemo(() => {
+    const names: Record<string, string> = {};
+    for (const voice of elevenLabsVoices.data?.voices ?? []) names[voice.id] = voice.name;
+    return names;
+  }, [elevenLabsVoices.data]);
+
+  const elevenLabsModelIds = useMemo(
+    () =>
+      (elevenLabsModels.data?.models ?? [])
+        .filter((model) => model.canDoTextToSpeech)
+        .map((model) => model.id),
+    [elevenLabsModels.data],
+  );
+
   const dirty = draft && baseline ? changedKeys(draft, baseline) : [];
   const dirtySet = new Set(dirty);
-
-  const voicePreview = useMemo<VoicePreview | undefined>(() => {
-    if (!draft) return undefined;
-    const voice = draft['tts.voice'];
-    const speed = draft['tts.speed'];
-    const instructions = draft['tts.instructions'];
-    return {
-      voice: typeof voice === 'string' && voice !== '' ? voice : undefined,
-      speed: typeof speed === 'number' ? speed : undefined,
-      instructions: typeof instructions === 'string' ? instructions : undefined,
-    };
-  }, [draft]);
 
   function setValue(key: string, value: unknown) {
     setDraft((previous) => (previous ? { ...previous, [key]: value } : previous));
@@ -198,6 +226,25 @@ function GeneralSettings() {
     );
   }
 
+  function goToSection(section: string): void {
+    if (tab !== 'general') {
+      setPendingSection(section);
+      void navigate({ to: '/settings', search: { tab: 'general' }, replace: true });
+      return;
+    }
+    scrollToSection(section);
+  }
+
+  // The tab switched after a pipeline click: scroll once the section exists.
+  useEffect(() => {
+    if (pendingSection === null || tab !== 'general') return;
+    const frame = requestAnimationFrame(() => {
+      scrollToSection(pendingSection);
+      setPendingSection(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pendingSection, tab]);
+
   if (settings.isPending) {
     return (
       <div className="space-y-4" role="status" aria-busy="true">
@@ -235,13 +282,38 @@ function GeneralSettings() {
     );
   }
 
+  const hasKey = (key: string): boolean =>
+    document.hasKeys[key] === true || (typeof draft[key] === 'string' && (draft[key] as string) !== '');
+  const voicePreview = voicePreviewFrom(draft);
+  const saveBar = (
+    <SaveBar count={dirty.length} saving={save.isPending} onDiscard={discard} onSave={handleSave} />
+  );
+  const sharedSectionProps = {
+    values: draft,
+    errors,
+    models: models.data?.models ?? [],
+    elevenLabsModels: elevenLabsModelIds,
+    voices: elevenLabsVoices.data?.voices ?? [],
+    // The query is disabled without a key; the picker still needs the reason.
+    voicesReason: hasElevenLabsKey ? elevenLabsVoices.data?.reason : 'no-key',
+    modelsReason: hasElevenLabsKey ? elevenLabsModels.data?.reason : 'no-key',
+    listenPreview: voicePreview,
+    providerValues: draft,
+    hasKeys: document.hasKeys,
+    onChange: setValue,
+    onResetToDefault: (key: string) => setValue(key, SETTING_BY_KEY.get(key)?.default ?? null),
+    collapsed: isPhone,
+  };
+
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Settings</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Every Echo's behaviour. Changes apply from the next request, with no restart.
+            {tab === 'providers'
+              ? 'The AI providers behind understanding and voice, and the keys they use. Changes apply from the next request.'
+              : "Every Echo's behaviour. Changes apply from the next request, with no restart."}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -278,85 +350,102 @@ function GeneralSettings() {
         </Alert>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[170px_minmax(0,1fr)]">
-        <nav aria-label="Settings sections" className="hidden lg:block">
-          <ul className="sticky top-6 space-y-0.5 text-sm">
-            {SETTING_SECTIONS.map((section) => (
-              <li key={section}>
-                <a
-                  href={`#section-${section}`}
-                  className="flex min-h-9 items-center justify-between gap-2 rounded-md px-2 text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  {SETTINGS_SECTION_LABELS[section]}
-                  {descriptorsOfSection(section).some((descriptor) => dirtySet.has(descriptor.key)) && (
-                    <>
-                      <span aria-hidden="true" className="size-2 rounded-full bg-signal" />
-                      <span className="sr-only">unsaved changes</span>
-                    </>
-                  )}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
+      <VoicePipeline
+        values={draft}
+        hasKey={hasKey}
+        voiceNames={voiceNames}
+        onGoToSection={goToSection}
+        onOpenProviders={() =>
+          void navigate({ to: '/settings', search: { tab: 'providers' }, replace: true })
+        }
+      />
 
-        <div className="min-w-0 space-y-4">
-          {SETTING_SECTIONS.map((section) => {
-            const descriptors = descriptorsOfSection(section);
-            return (
-              <SettingsSection
-                key={section}
-                section={section}
-                descriptors={descriptors}
-                values={draft}
-                errors={errors}
-                models={models.data?.models ?? []}
-                hasKeys={document.hasKeys}
-                dirty={descriptors.some((descriptor) => dirtySet.has(descriptor.key))}
-                overriddenBy={overriddenBy.get(section)}
-                onChange={setValue}
-                onResetToDefault={(key) => setValue(key, SETTING_BY_KEY.get(key)?.default ?? null)}
-                collapsed={isPhone}
-                footer={
-                  section === 'assistant' ? (
-                    <Button type="button" variant="outline" onClick={() => setPromptOpen(true)}>
-                      <FileTextIcon aria-hidden="true" /> Show the full prompt
-                    </Button>
-                  ) : section === 'voice' ? (
-                    <VoiceTestPhrase devices={deviceList} voice={voicePreview} />
-                  ) : section === 'network' ? (
-                    <TestSoundButton devices={deviceList} />
-                  ) : section === 'advanced' ? (
-                    <div className="space-y-2">
-                      <p className="text-sm text-muted-foreground">
-                        Reconnect and ping timings apply when a link next reconnects. Use this after changing
-                        them.
-                      </p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={reconnect.isPending || deviceList.length === 0}
-                        onClick={() => {
-                          const targets = deviceList.filter((device) => device.enabled);
-                          if (targets.length === 0) return;
-                          for (const device of targets) reconnect.mutate(device.id);
-                          toast.success(
-                            `Reconnecting ${targets.length === 1 ? '1 Echo' : `${targets.length} Echos`}…`,
-                          );
-                        }}
-                      >
-                        <RefreshCwIcon aria-hidden="true" /> Reconnect all Echos now
-                      </Button>
-                    </div>
-                  ) : undefined
-                }
-              />
-            );
-          })}
-
-          <SaveBar count={dirty.length} saving={save.isPending} onDiscard={discard} onSave={handleSave} />
+      {tab === 'providers' ? (
+        <div className="space-y-4">
+          <ProvidersPanel
+            descriptors={descriptorsOfSection('providers')}
+            values={draft}
+            errors={errors}
+            hasKeys={document.hasKeys}
+            onChange={setValue}
+            onResetToDefault={(key) => setValue(key, SETTING_BY_KEY.get(key)?.default ?? null)}
+          />
+          {saveBar}
         </div>
-      </div>
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[170px_minmax(0,1fr)]">
+          <nav aria-label="Settings sections" className="hidden lg:block">
+            <ul className="sticky top-6 space-y-0.5 text-sm">
+              {SETTING_SECTIONS.filter((section) => section !== 'providers').map((section) => (
+                <li key={section}>
+                  <a
+                    href={`#section-${section}`}
+                    className="flex min-h-9 items-center justify-between gap-2 rounded-md px-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    {SETTINGS_SECTION_LABELS[section]}
+                    {descriptorsOfSection(section).some((descriptor) => dirtySet.has(descriptor.key)) && (
+                      <>
+                        <span aria-hidden="true" className="size-2 rounded-full bg-signal" />
+                        <span className="sr-only">unsaved changes</span>
+                      </>
+                    )}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+
+          <div className="min-w-0 space-y-4">
+            {SETTING_SECTIONS.filter((section) => section !== 'providers').map((section) => {
+              const descriptors = descriptorsOfSection(section);
+              return (
+                <SettingsSection
+                  key={section}
+                  section={section}
+                  descriptors={descriptors}
+                  {...sharedSectionProps}
+                  dirty={descriptors.some((descriptor) => dirtySet.has(descriptor.key))}
+                  overriddenBy={overriddenBy.get(section)}
+                  footer={
+                    section === 'assistant' ? (
+                      <Button type="button" variant="outline" onClick={() => setPromptOpen(true)}>
+                        <FileTextIcon aria-hidden="true" /> Show the full prompt
+                      </Button>
+                    ) : section === 'voice' ? (
+                      <VoiceTestPhrase devices={deviceList} voice={voicePreview} />
+                    ) : section === 'network' ? (
+                      <TestSoundButton devices={deviceList} />
+                    ) : section === 'advanced' ? (
+                      <div className="space-y-2">
+                        <p className="text-sm text-muted-foreground">
+                          Reconnect and ping timings apply when a link next reconnects. Use this after
+                          changing them.
+                        </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={reconnect.isPending || deviceList.length === 0}
+                          onClick={() => {
+                            const targets = deviceList.filter((device) => device.enabled);
+                            if (targets.length === 0) return;
+                            for (const device of targets) reconnect.mutate(device.id);
+                            toast.success(
+                              `Reconnecting ${targets.length === 1 ? '1 Echo' : `${targets.length} Echos`}…`,
+                            );
+                          }}
+                        >
+                          <RefreshCwIcon aria-hidden="true" /> Reconnect all Echos now
+                        </Button>
+                      </div>
+                    ) : undefined
+                  }
+                />
+              );
+            })}
+            {saveBar}
+          </div>
+        </div>
+      )}
 
       <SettingsHistoryDialog
         open={historyOpen}
@@ -369,9 +458,30 @@ function GeneralSettings() {
   );
 }
 
+/**
+ * Scrolls to a settings section and focuses its heading. Phone sections are
+ * <details>; the hash event reveals the right one (the section listens for
+ * hashchange), then the scroll is smooth and the heading takes focus.
+ */
+function scrollToSection(section: string): void {
+  const element = document.getElementById(`section-${section}`);
+  if (!element) return;
+  window.history.replaceState(null, '', `#section-${section}`);
+  window.dispatchEvent(new Event('hashchange'));
+  element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Brief highlight so the eye lands on the section the navigator chose.
+  element.classList.add('ring-2', 'ring-signal/60');
+  window.setTimeout(() => element.classList.remove('ring-2', 'ring-signal/60'), 1600);
+  const heading = element.querySelector('h2, summary');
+  if (heading instanceof HTMLElement) {
+    heading.tabIndex = -1;
+    requestAnimationFrame(() => heading.focus({ preventScroll: true }));
+  }
+}
+
 /** The draft starts at the resolved values; a secret's value never reaches the browser. */
 function seed(document: SettingsDocument): FormValues {
-  return { ...document.effective, 'openai.apiKey': '' };
+  return { ...document.effective, 'openai.apiKey': '', 'elevenlabs.apiKey': '' };
 }
 
 function admit(

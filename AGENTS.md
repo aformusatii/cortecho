@@ -105,12 +105,14 @@ apps/api/src/
   vad/end-of-speech.ts    energy VAD (adaptive noise floor): ends requests, as HA does
   features/settings/      SQLite store, per-Echo overrides, validation, one-time import, routes
   features/devices/       SQLite CRUD, one client + pipeline per Echo, identity checks, adopt/secure, routes
+  features/providers/     ElevenLabs voices/models, voice preview proxy, provider key checks, routes
   features/discovery/     mDNS browse + subnet probe, ignore list, /api/discovery routes
   features/setup/         onboarding state (app_state) and the OpenAI check, /api/setup routes
   features/turns/         SQLite history (newest 1000)
   features/voice/         /api/turns, /api/say, /api/ask, /api/reply-audio
   doctor/                 read-only checks behind the CLI and GET /api/doctor
-  pipeline/               services, OpenAI, agent, sessions, prompt layers, turn state machine
+  pipeline/               services, agent, sessions, prompt layers, turn state machine
+  pipeline/providers/     OpenAI (STT/TTS/Responses) and ElevenLabs (STT/TTS) implementations
   tools/                  registry, index, plugins/*.ts
   scripts/                fake-echo, echo-set-key, doctor
 apps/api/drizzle/         generated SQL migrations - committed, never edited by hand
@@ -166,7 +168,7 @@ docs/                     user and contributor documentation
 - **New connector type:** one entry in `packages/shared/src/mcp.catalog.ts`
   (URL, auth quirks, scopes, guide anchor) and a `docs/connectors.md` section.
   No new code: the Add dialog and the form are generated from the catalog.
-- **Realtime API mode:** a new implementation next to `pipeline/openai.ts`
+- **Realtime API mode:** a new implementation next to `pipeline/providers/openai.ts`
   behind a `PIPELINE_MODE` setting; keep the turn-based pipeline as the
   fallback. Needed before `gpt-4o-mini-tts` shuts down on 2027-01-06.
 

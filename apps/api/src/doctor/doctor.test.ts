@@ -131,6 +131,70 @@ describe('runDoctor', () => {
     }
   });
 
+  it('checks ElevenLabs only when a stage selects it', async () => {
+    const ctx = createTestRuntime();
+    try {
+      const before = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: [],
+        production: false,
+        env: {},
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      expect(before.checks.some((check) => check.name.startsWith('ElevenLabs'))).toBe(false);
+
+      ctx.settings.apply({ 'stt.provider': 'elevenlabs' }, ctx.settings.version);
+      const missing = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: [],
+        production: false,
+        env: {},
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      expect(missing.checks.find((check) => check.name === 'ElevenLabs key')).toMatchObject({
+        status: 'fail',
+        fix: expect.stringContaining('Settings → Providers'),
+      });
+      expect(missing.checks.find((check) => check.name === 'ElevenLabs transcription model')).toMatchObject({
+        status: 'pass',
+      });
+      expect(missing.checks.find((check) => check.name === 'ElevenLabs endpoint')?.status).toBe('skip');
+    } finally {
+      ctx.sqlite.close();
+    }
+  });
+
+  it('passes the ElevenLabs endpoint check with a key, and warns about an unknown model', async () => {
+    const ctx = createTestRuntime();
+    try {
+      ctx.settings.apply(
+        {
+          'tts.provider': 'elevenlabs',
+          'tts.elevenlabsModel': 'my-custom-model',
+          'elevenlabs.apiKey': 'el-key',
+        },
+        ctx.settings.version,
+      );
+      const report = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: [],
+        production: false,
+        env: {},
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      expect(report.checks.find((check) => check.name === 'ElevenLabs key')?.status).toBe('pass');
+      expect(report.checks.find((check) => check.name === 'ElevenLabs endpoint')?.status).toBe('pass');
+      expect(report.checks.find((check) => check.name === 'ElevenLabs voice model')?.status).toBe('warn');
+      // The OpenAI TTS deprecation warning does not apply to an ElevenLabs voice.
+      expect(report.checks.some((check) => check.name === 'TTS model')).toBe(false);
+    } finally {
+      ctx.sqlite.close();
+    }
+  });
+
   it('serves the same report from GET /api/doctor', async () => {
     const ctx = createTestRuntime();
     try {

@@ -2,7 +2,7 @@ import { buildSettings, DEFAULT_SETTINGS, type Settings } from '@cortecho/shared
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../config.ts';
 import { ToolRegistry } from '../tools/registry.ts';
-import { createOpenAiServices } from './openai.ts';
+import { createVoiceServices } from './voice-services.ts';
 
 const { create } = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock('openai', () => ({
@@ -26,7 +26,7 @@ function testSettings(): Settings {
 
 function services() {
   const settings = testSettings();
-  return createOpenAiServices(loadConfig(), new ToolRegistry(), () => settings);
+  return createVoiceServices(loadConfig(), new ToolRegistry(), () => settings);
 }
 
 function context() {

@@ -31,7 +31,13 @@ describe('voice routes', () => {
       expect(body).toMatchObject({
         status: 'ok',
         devices: [],
-        openai: { configured: true },
+        // The test runtime has no stored keys; the fake services are configured.
+        openai: { configured: false },
+        providers: {
+          stt: { provider: 'openai', configured: false },
+          thinking: { provider: 'openai', configured: false },
+          tts: { provider: 'openai', configured: false },
+        },
         lastTurn: null,
       });
       expect(body.tools).toContain('echo_test');

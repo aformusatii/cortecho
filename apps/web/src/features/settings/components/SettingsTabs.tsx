@@ -2,6 +2,7 @@ import { useNavigate, useSearch } from '@tanstack/react-router';
 
 const TABS = [
   { id: 'general', label: 'General' },
+  { id: 'providers', label: 'Providers' },
   { id: 'connectors', label: 'Connectors' },
 ] as const;
 

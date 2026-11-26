@@ -302,7 +302,7 @@ export class VoicePipeline {
       deadlineAtMs: null,
     };
     // The user is about to speak for a few seconds: time to open the connection.
-    this.options.services.warmUp?.();
+    this.options.services.warmUp?.(settings);
     turn.deadline = setTimeout(() => {
       log.warn('listening took too long (the mic stream stalled?)');
       this.endListening(turn, turn.vad?.speechHeard ? 'speech' : 'no-speech', 'wall-clock-listen-deadline');
@@ -522,7 +522,11 @@ export class VoicePipeline {
     const { stt } = this.options.services;
     const signal = turn.abort.signal;
     log.warn('nothing usable recognised, transcribing again', {
-      model: turn.settings.stt.model,
+      provider: turn.settings.stt.provider,
+      model:
+        turn.settings.stt.provider === 'elevenlabs'
+          ? turn.settings.stt.elevenlabsModel
+          : turn.settings.stt.model,
       wakeSoundSkipMs: turn.settings.stt.wakeSoundSkipMs,
       audioMs: pcmDurationMs(pcm.length, MIC_RATE),
     });
@@ -621,7 +625,14 @@ export class VoicePipeline {
       }
       turn.timings.transcriptMs = this.elapsed(turn);
       if (!isUsableTranscript(text)) {
-        log.warn('nothing usable recognised', { text, model: turn.settings.stt.model });
+        log.warn('nothing usable recognised', {
+          text,
+          provider: turn.settings.stt.provider,
+          model:
+            turn.settings.stt.provider === 'elevenlabs'
+              ? turn.settings.stt.elevenlabsModel
+              : turn.settings.stt.model,
+        });
         turn.transcript = text || null;
         this.endQuietly(turn);
         return;
@@ -1275,12 +1286,17 @@ export function followUpVad<T extends ListenLimits>(
   return { ...guarded, noSpeechTimeoutMs, maxUtteranceMs };
 }
 
-/** The turn's settings with the form's unsaved voice values, for the test phrase. */
-function withVoicePreview(settings: Settings, preview: VoicePreview): Settings {
+/** The settings with a form's unsaved voice values (test phrase, browser sample). */
+export function withVoicePreview(settings: Settings, preview: VoicePreview): Settings {
   const tts = { ...settings.tts };
+  if (preview.provider !== undefined) tts.provider = preview.provider;
   if (preview.voice !== undefined) tts.voice = preview.voice;
+  if (preview.model !== undefined) tts.model = preview.model;
   if (preview.speed !== undefined) tts.speed = preview.speed;
   if (preview.instructions !== undefined) tts.instructions = preview.instructions;
+  if (preview.elevenlabsVoiceId !== undefined) tts.elevenlabsVoiceId = preview.elevenlabsVoiceId;
+  if (preview.elevenlabsModel !== undefined) tts.elevenlabsModel = preview.elevenlabsModel;
+  if (preview.elevenlabsStability !== undefined) tts.elevenlabsStability = preview.elevenlabsStability;
   return { ...settings, tts };
 }
 

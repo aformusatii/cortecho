@@ -114,7 +114,7 @@ export function OverviewTab({ device }: { device: DeviceStatus }) {
           <VoiceTestPhrase
             devices={[device]}
             deviceId={device.id}
-            description="Speaks one phrase on this Echo. It saves nothing and needs OpenAI to be configured."
+            description="Speaks one phrase on this Echo. It saves nothing and needs the selected voice provider to be configured."
           />
         </div>
       </section>

@@ -1,4 +1,4 @@
-import type { DeviceStatus, Health } from '@cortecho/shared';
+import { type DeviceStatus, type Health, providerLabel } from '@cortecho/shared';
 import { ProblemFix } from '@/features/setup/components/ProblemFix.tsx';
 import { CONNECTION_LABELS, formatTime, formatUptime, PROBLEM_LABELS } from '../format.ts';
 import { StatusDot } from './StatusDot.tsx';
@@ -61,7 +61,9 @@ const connectorTone = {
 } as const;
 
 export function HealthCards({ health }: { health: Health }) {
-  const { devices, openai, connectors } = health;
+  const { devices, providers, connectors } = health;
+  const stages = [providers.stt, providers.thinking, providers.tts];
+  const allConfigured = stages.every((stage) => stage.configured);
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {devices.length === 0 ? (
@@ -93,15 +95,21 @@ export function HealthCards({ health }: { health: Health }) {
           {health.tools.join(', ') || 'No tools'}
         </p>
       </Card>
-      <Card title="OpenAI">
+      <Card title="Providers">
         <p className="text-base font-semibold">
-          <StatusDot tone={openai.configured ? 'good' : 'bad'}>
-            {openai.configured ? 'API key set' : 'OPENAI_API_KEY missing'}
+          <StatusDot tone={allConfigured ? 'good' : 'bad'}>
+            {allConfigured ? 'Provider keys set' : 'Provider key missing'}
           </StatusDot>
         </p>
-        <Row label="Speech to text">{openai.sttModel}</Row>
-        <Row label="Agent">{openai.agentModel}</Row>
-        <Row label="Text to speech">{openai.ttsModel}</Row>
+        <Row label="Understanding">
+          {providerLabel(providers.stt.provider)} · {providers.stt.model}
+        </Row>
+        <Row label="Thinking">
+          {providerLabel(providers.thinking.provider)} · {providers.thinking.model}
+        </Row>
+        <Row label="Voice">
+          {providerLabel(providers.tts.provider)} · {providers.tts.model}
+        </Row>
       </Card>
     </div>
   );

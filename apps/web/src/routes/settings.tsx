@@ -8,7 +8,12 @@ export const Route = createFileRoute('/settings')({
     const server = Number(search.server);
     const auth = search.auth === 'ok' || search.auth === 'error' ? search.auth : undefined;
     return {
-      tab: search.tab === 'connectors' ? ('connectors' as const) : ('general' as const),
+      tab:
+        search.tab === 'connectors'
+          ? ('connectors' as const)
+          : search.tab === 'providers'
+            ? ('providers' as const)
+            : ('general' as const),
       ...(Number.isInteger(server) && server > 0 ? { server } : {}),
       ...(auth ? { auth } : {}),
       ...(typeof search.reason === 'string' ? { reason: search.reason } : {}),

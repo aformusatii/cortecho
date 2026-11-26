@@ -18,7 +18,7 @@ test.describe('Status page', () => {
     await completeSetup(request);
   });
 
-  test('shows the configured Echo, pipeline and OpenAI state', async ({ page, request }, testInfo) => {
+  test('shows the configured Echo, pipeline and provider state', async ({ page, request }, testInfo) => {
     const device = await createDevice(request, { name: 'Kitchen', port: 9 });
     try {
       await page.goto('/');
@@ -28,9 +28,9 @@ test.describe('Status page', () => {
       await expect(card.getByText('127.0.0.1:9')).toBeVisible();
       await expect(card.getByText('Plaintext')).toBeVisible();
       await expect(page.getByRole('region', { name: 'Pipeline' }).getByText(/echo_test/)).toBeVisible();
-      await expect(
-        page.getByRole('region', { name: 'OpenAI' }).getByText('OPENAI_API_KEY missing'),
-      ).toBeVisible();
+      const providers = page.getByRole('region', { name: 'Providers' });
+      await expect(providers.getByText('Provider key missing')).toBeVisible();
+      await expect(providers.getByText('OpenAI · gpt-transcribe')).toBeVisible();
       await saveScreenshot(page, testInfo, 'status');
     } finally {
       await deleteDevice(request, device.id);
@@ -63,7 +63,7 @@ test.describe('Status page', () => {
     await waitForStatus(page);
     await page.getByLabel(/Ask the agent/).fill('What time is it?');
     await page.getByRole('button', { name: /Ask/ }).click();
-    await expect(page.getByText(/OpenAI is not configured/)).toBeVisible();
+    await expect(page.getByText(/OpenAI is not configured/).first()).toBeVisible();
     const turns = page.getByRole('region', { name: 'Latest turns' });
     await expect(turns.getByText('“What time is it?”').first()).toBeVisible();
     await expect(turns.getByText('Error', { exact: true }).first()).toBeVisible();

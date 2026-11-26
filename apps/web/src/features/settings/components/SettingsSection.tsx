@@ -1,8 +1,11 @@
 import {
   type DeviceStatus,
+  type ElevenLabsVoice,
+  type ProviderListReason,
   SETTINGS_SECTION_LABELS,
   type SectionId,
   type SettingDescriptor,
+  type VoicePreview,
 } from '@cortecho/shared';
 import { Link } from '@tanstack/react-router';
 import { ChevronRightIcon } from 'lucide-react';
@@ -18,6 +21,12 @@ export type SettingsSectionProps = {
   values: FormValues;
   errors: Record<string, string>;
   models: readonly string[];
+  elevenLabsModels?: readonly string[];
+  voices?: readonly ElevenLabsVoice[];
+  voicesReason?: ProviderListReason;
+  modelsReason?: ProviderListReason;
+  listenPreview?: VoicePreview;
+  providerValues?: FormValues;
   hasKeys: Record<string, boolean>;
   dirty: boolean;
   overriddenBy?: OverriddenNote[];
@@ -40,6 +49,12 @@ export function SettingsSection({
   values,
   errors,
   models,
+  elevenLabsModels = [],
+  voices = [],
+  voicesReason,
+  modelsReason,
+  listenPreview,
+  providerValues,
   hasKeys,
   dirty,
   overriddenBy = [],
@@ -55,6 +70,12 @@ export function SettingsSection({
         values={values}
         errors={errors}
         models={models}
+        elevenLabsModels={elevenLabsModels}
+        voices={voices}
+        voicesReason={voicesReason}
+        modelsReason={modelsReason}
+        listenPreview={listenPreview}
+        providerValues={providerValues}
         hasKeys={hasKeys}
         onChange={onChange}
         onResetToDefault={onResetToDefault}

@@ -198,9 +198,10 @@ messages.
 
 ## Dependencies
 
-On top of the template: **`openai`** (transcription, Responses API, speech).
-The ESPHome protobuf subset, the Noise handshake (on `node:crypto`), VAD, WAV
-and resampling are hand-written. The runtime image needs `tzdata` for the POSIX
+On top of the template: **`openai`** (OpenAI transcription, Responses API and
+speech). ElevenLabs is called with plain `fetch` (no SDK), so it adds no
+dependency. The ESPHome protobuf subset, the Noise handshake (on
+`node:crypto`), VAD, WAV and resampling are hand-written. The runtime image needs `tzdata` for the POSIX
 time zone rule.
 
 ## Branding assets

@@ -75,9 +75,54 @@ describe('settings registry', () => {
     }
   });
 
-  it('marks the OpenAI key as the secret', () => {
-    expect(SECRET_SETTING_KEYS).toEqual(['openai.apiKey']);
+  it('marks the provider keys as secrets', () => {
+    expect(SECRET_SETTING_KEYS).toEqual(['openai.apiKey', 'elevenlabs.apiKey']);
     expect(SETTING_BY_KEY.get('openai.apiKey')?.secret).toBe(true);
+    expect(SETTING_BY_KEY.get('elevenlabs.apiKey')?.secret).toBe(true);
+    // The ElevenLabs key is new: it has no environment import.
+    expect(SETTING_BY_KEY.get('elevenlabs.apiKey')?.env).toBeUndefined();
+  });
+
+  it('points every conditional field at a select option', () => {
+    const conditional = SETTING_DESCRIPTORS.filter((descriptor) => descriptor.showWhen !== undefined);
+    expect(conditional.map((descriptor) => descriptor.key)).toEqual(
+      expect.arrayContaining([
+        'stt.model',
+        'stt.elevenlabsModel',
+        'tts.model',
+        'tts.voice',
+        'tts.elevenlabsVoiceId',
+      ]),
+    );
+    for (const descriptor of conditional) {
+      const showWhen = descriptor.showWhen;
+      if (!showWhen) throw new Error(`${descriptor.key}: missing showWhen`);
+      const target = SETTING_BY_KEY.get(showWhen.key);
+      expect(target, `${descriptor.key}: ${showWhen.key} exists`).toBeDefined();
+      expect(target?.control, `${descriptor.key}: ${showWhen.key} is a select`).toBe('select');
+      expect(target?.options, `${descriptor.key}: ${showWhen.key} offers ${showWhen.equals}`).toContain(
+        showWhen.equals,
+      );
+    }
+  });
+
+  it('labels select options with values that exist', () => {
+    const labelled = SETTING_DESCRIPTORS.filter((descriptor) => descriptor.optionLabels !== undefined);
+    expect(labelled.map((descriptor) => descriptor.key)).toEqual(
+      expect.arrayContaining(['stt.provider', 'tts.provider']),
+    );
+    for (const descriptor of labelled) {
+      expect(descriptor.control).toBe('select');
+      for (const value of Object.keys(descriptor.optionLabels ?? {})) {
+        expect(descriptor.options, `${descriptor.key}: ${value}`).toContain(value);
+      }
+    }
+  });
+
+  it('defaults both audio stages to OpenAI and keeps thinking there', () => {
+    expect(DEFAULT_SETTINGS['stt.provider']).toBe('openai');
+    expect(DEFAULT_SETTINGS['tts.provider']).toBe('openai');
+    expect(SETTING_BY_KEY.get('agent.model')?.section).toBe('thinking');
   });
 
   it('allows per-Echo overrides only for room-dependent knobs', () => {

@@ -13,15 +13,21 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { Switch } from '@/components/ui/switch.tsx';
-import { settingsQueryOptions } from '@/features/settings/api/settings.queries.ts';
+import {
+  elevenLabsVoicesQueryOptions,
+  settingsQueryOptions,
+} from '@/features/settings/api/settings.queries.ts';
 import { SaveBar } from '@/features/settings/components/SaveBar.tsx';
 import { SettingField } from '@/features/settings/components/SettingField.tsx';
+import { VoiceTestPhrase } from '@/features/settings/components/VoiceTestPhrase.tsx';
 import {
   changedKeys,
   type FormValues,
   focusField,
   formatValue,
+  isFieldVisible,
   validateForm,
+  voicePreviewFrom,
 } from '@/features/settings/draft.ts';
 import { isApiError } from '@/lib/api-client.ts';
 import { useSaveDeviceSettings } from '../api/devices.mutations.ts';
@@ -38,6 +44,7 @@ const PER_ECHO = SETTING_DESCRIPTORS.filter((descriptor) => descriptor.perEcho &
 export function TuningTab({ device }: { device: DeviceStatus }) {
   const document = useQuery(deviceSettingsQueryOptions(device.id));
   const global = useQuery(settingsQueryOptions());
+  const voices = useQuery(elevenLabsVoicesQueryOptions(global.data?.hasKeys['elevenlabs.apiKey'] === true));
   const save = useSaveDeviceSettings(device.id);
 
   const [draft, setDraft] = useState<FormValues | null>(null);
@@ -166,7 +173,9 @@ export function TuningTab({ device }: { device: DeviceStatus }) {
     );
   }
 
-  const globalValues = global.data?.effective ?? {};
+  // The provider settings are global; the overrides only change the voice.
+  const providerValues = { ...(document.data.effective ?? {}), ...draft };
+  const voicePreview = voicePreviewFrom(providerValues);
 
   return (
     <div className="space-y-4">
@@ -198,7 +207,9 @@ export function TuningTab({ device }: { device: DeviceStatus }) {
       )}
 
       {SETTING_SECTIONS.map((section) => {
-        const descriptors = PER_ECHO.filter((descriptor) => descriptor.section === section);
+        const descriptors = PER_ECHO.filter(
+          (descriptor) => descriptor.section === section && isFieldVisible(descriptor, providerValues),
+        );
         if (descriptors.length === 0) return null;
         return (
           <section
@@ -212,7 +223,7 @@ export function TuningTab({ device }: { device: DeviceStatus }) {
             <div className="divide-y">
               {descriptors.map((descriptor) => {
                 const overridden = descriptor.key in draft;
-                const globalValue = globalValues[descriptor.key] ?? descriptor.default;
+                const globalValue = document.data?.effective?.[descriptor.key] ?? descriptor.default;
                 return (
                   <SettingField
                     key={descriptor.key}
@@ -222,6 +233,11 @@ export function TuningTab({ device }: { device: DeviceStatus }) {
                     caption={`Global: ${formatValue(globalValue, descriptor)}`}
                     inherited={overridden ? undefined : 'Inherits the global value.'}
                     disabled={!overridden}
+                    voices={voices.data?.voices ?? []}
+                    voicesReason={
+                      global.data?.hasKeys['elevenlabs.apiKey'] === true ? voices.data?.reason : 'no-key'
+                    }
+                    listenPreview={voicePreview}
                     headerAction={
                       <Switch
                         checked={overridden}
@@ -234,6 +250,11 @@ export function TuningTab({ device }: { device: DeviceStatus }) {
                 );
               })}
             </div>
+            {section === 'voice' && (
+              <div className="border-t py-3">
+                <VoiceTestPhrase devices={[device]} deviceId={device.id} voice={voicePreview} />
+              </div>
+            )}
           </section>
         );
       })}

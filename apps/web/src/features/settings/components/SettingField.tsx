@@ -1,4 +1,4 @@
-import type { SettingDescriptor } from '@cortecho/shared';
+import type { ElevenLabsVoice, ProviderListReason, SettingDescriptor, VoicePreview } from '@cortecho/shared';
 import { RotateCcwIcon } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Combobox } from '@/components/ui/combobox.tsx';
@@ -7,6 +7,8 @@ import { Label } from '@/components/ui/label.tsx';
 import { Switch } from '@/components/ui/switch.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
 import { fieldId, formatBounds, formatValue } from '../draft.ts';
+import { VoicePicker } from './VoicePicker.tsx';
+import { VoiceSampleButton } from './VoiceSampleButton.tsx';
 
 export type SettingFieldProps = {
   descriptor: SettingDescriptor;
@@ -14,8 +16,16 @@ export type SettingFieldProps = {
   error?: string;
   /** Global form: shows "default" or "changed ↺" (reset to the built-in default). */
   onResetToDefault?: () => void;
-  /** Model ids for a `suggestFrom: 'openai-models'` combobox (free text still allowed). */
+  /** Model ids for a `suggestFrom` combobox (free text still allowed). */
   suggestions?: readonly string[];
+  /** The account's voices, for `suggestFrom: 'elevenlabs-voices'`. */
+  voices?: readonly ElevenLabsVoice[];
+  /** Why the voice list is empty, so the one helper line can say it. */
+  voicesReason?: ProviderListReason;
+  /** Why the model list is empty (the static suggestions still work). */
+  modelsReason?: ProviderListReason;
+  /** The draft voice, for "Listen here" on the voice fields (both providers). */
+  listenPreview?: VoicePreview;
   /** Shown instead of a control when the value is inherited from the global layer. */
   inherited?: string;
   disabled?: boolean;
@@ -41,6 +51,10 @@ export function SettingField({
   error,
   onResetToDefault,
   suggestions = [],
+  voices = [],
+  voicesReason,
+  modelsReason,
+  listenPreview,
   inherited,
   disabled = false,
   onChange,
@@ -114,8 +128,15 @@ export function SettingField({
           describedBy={describedBy}
           invalid={Boolean(error)}
           suggestions={suggestions}
+          voices={voices}
           onChange={onChange}
         />
+      )}
+
+      {listenPreview && (descriptor.key === 'tts.voice' || descriptor.key === 'tts.elevenlabsVoiceId') && (
+        <div className="flex items-center gap-2">
+          <VoiceSampleButton preview={listenPreview} />
+        </div>
       )}
 
       {descriptor.control === 'slider' && inherited === undefined && (
@@ -125,7 +146,9 @@ export function SettingField({
       )}
 
       <p id={helpId} className="text-xs text-muted-foreground">
-        {descriptor.help}
+        {voiceHelp(descriptor, voices.length, voicesReason) ??
+          modelHelp(descriptor, modelsReason) ??
+          descriptor.help}
         {formatBounds(descriptor) && ` (${formatBounds(descriptor)})`}
       </p>
       {error && (
@@ -135,6 +158,43 @@ export function SettingField({
       )}
     </div>
   );
+}
+
+/**
+ * One helper line under a field. For the ElevenLabs picker with no list, the
+ * reason replaces the generic help: a scoped key can still paste an id.
+ */
+function voiceHelp(
+  descriptor: SettingDescriptor,
+  voiceCount: number,
+  reason: ProviderListReason | undefined,
+): string | null {
+  if (descriptor.suggestFrom !== 'elevenlabs-voices' || voiceCount > 0) return null;
+  switch (reason) {
+    case 'no-key':
+      return 'Add the ElevenLabs key under Providers to list your voices; you can still paste a voice id.';
+    case 'missing-permission':
+      return 'This key cannot list voices (it needs Voices → Read). Paste a voice id, or add that permission in ElevenLabs.';
+    case 'unavailable':
+      return 'Could not load the voices; check the connection. You can still paste a voice id.';
+    default:
+      return null;
+  }
+}
+
+/** The same, for the model suggestions: the static list is still usable. */
+function modelHelp(descriptor: SettingDescriptor, reason: ProviderListReason | undefined): string | null {
+  if (descriptor.suggestFrom !== 'elevenlabs-models') return null;
+  switch (reason) {
+    case 'no-key':
+      return 'Add the ElevenLabs key under Providers to load the model list; the suggested models still work.';
+    case 'missing-permission':
+      return 'This key cannot list models (it needs Models → Read); the suggested models still work.';
+    case 'unavailable':
+      return 'Could not load the model list; the suggested models still work.';
+    default:
+      return null;
+  }
 }
 
 function sameAsDefault(descriptor: SettingDescriptor, value: unknown): boolean {
@@ -152,6 +212,7 @@ type ControlProps = {
   describedBy: string;
   invalid: boolean;
   suggestions: readonly string[];
+  voices: readonly ElevenLabsVoice[];
   onChange: (value: unknown) => void;
 };
 
@@ -164,6 +225,7 @@ function Control({
   describedBy,
   invalid,
   suggestions,
+  voices,
   onChange,
 }: ControlProps) {
   const shared = {
@@ -243,12 +305,25 @@ function Control({
         >
           {(descriptor.options ?? []).map((option) => (
             <option key={option} value={option}>
-              {option}
+              {descriptor.optionLabels?.[option] ?? option}
             </option>
           ))}
         </select>
       );
     case 'combobox':
+      if (descriptor.suggestFrom === 'elevenlabs-voices') {
+        return (
+          <VoicePicker
+            id={id}
+            value={typeof value === 'string' ? value : ''}
+            voices={voices}
+            disabled={disabled}
+            invalid={invalid}
+            describedBy={describedBy}
+            onChange={(next) => onChange(next)}
+          />
+        );
+      }
       return (
         <Combobox
           id={id}
