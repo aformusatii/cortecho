@@ -1,0 +1,5 @@
+{
+  "name": "@cortecho/onboarding-openai-gw",
+  "private": true,
+  "type": "module"
+}

@@ -19,5 +19,9 @@ echo-dot-assist
 *.key
 *.pem
 *.wav
+# The onboarding echo-sim image needs its fixture and runner specs.
+!onboarding/fixtures/what-time-is-it.wav
+!onboarding/runner/specs/**
 data
+onboarding/out
 prompt.md

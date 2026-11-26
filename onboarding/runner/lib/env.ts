@@ -1,0 +1,11 @@
+export const BASE_URL = process.env.BASE_URL ?? 'http://10.231.47.10:3000';
+export const ECHO_URL = process.env.ECHO_URL ?? 'http://10.231.47.21:8080';
+export const GATEWAY_URL = process.env.GATEWAY_URL ?? 'http://10.231.47.30:8080';
+export const ECHO_HOST = process.env.ECHO_HOST ?? '10.231.47.21';
+export const ECHO_PORT = Number(process.env.ECHO_PORT ?? '26053');
+export const ECHO_FRIENDLY_NAME = process.env.ECHO_FRIENDLY_NAME ?? 'Echo Dot 2 5c0e11';
+export const OPENAI_MODE = process.env.OPENAI_MODE ?? 'mock';
+export const REPLY_ORIGIN = new URL(BASE_URL).origin;
+export const OUT = '/out';
+export const STEPS_DIR = `${OUT}/steps`;
+export const MEDIA_DIR = `${OUT}/media`;

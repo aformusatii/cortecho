@@ -13,7 +13,8 @@
       "!apps/api/drizzle",
       "!**/dev-dist",
       "!**/dist",
-      "!docs/screenshots"
+      "!docs/screenshots",
+      "!onboarding/out"
     ]
   },
   "formatter": {

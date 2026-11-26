@@ -17,6 +17,7 @@ data/*.db-shm
 test-results/
 playwright-report/
 blob-report/
+onboarding/out/
 playwright/.cache/
 
 # Production smoke tests (docs/development.md). The real
@@ -58,6 +59,8 @@ echo-dot-assist/
 # Debug recordings of your voice (DEBUG_AUDIO_DIR)
 data/audio/
 *.wav
+# The onboarding suite's fixture is a build input (see onboarding/).
+!onboarding/fixtures/*.wav
 
 # SQLite backups made before a deployment (data/app.db.bak-*)
 data/*.db.bak*

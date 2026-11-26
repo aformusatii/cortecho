@@ -1,0 +1,135 @@
+# The on-demand proof that the shipped Docker image onboards a new Echo Dot.
+# It builds the image from this ref, runs the whole wizard against a simulated
+# hassmic on a private /24, and publishes the report. It is never part of CI:
+# a real OpenAI run spends money.
+name: Onboarding E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      openai:
+        description: OpenAI mode (real spends money; mock is deterministic)
+        type: choice
+        options: [real, mock]
+        default: real
+      image:
+        description: Image to test (empty = build this ref)
+        type: string
+        required: false
+        default: ''
+
+# A second dispatch must not tear down the first run's containers mid-test.
+concurrency:
+  group: onboarding-e2e
+  cancel-in-progress: false
+
+jobs:
+  onboarding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    # Job-level env lets the early check test the secret in an `if` (the
+    # secrets context itself is not available there).
+    env:
+      OPENAI_API_KEY_E2E: ${{ secrets.OPENAI_API_KEY_E2E }}
+    outputs:
+      pages: ${{ steps.pages.outcome }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # CI builds the image once and tells run.sh not to build it again.
+      - name: Build the Cortecho image
+        if: inputs.image == ''
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: cortecho:onboarding
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Check the OpenAI secret
+        if: inputs.openai == 'real' && env.OPENAI_API_KEY_E2E == ''
+        run: |
+          echo "::error::openai=real needs the OPENAI_API_KEY_E2E repository secret."
+          exit 1
+
+      # The runtime opens only the cortecho-onboarding project. The gateway is
+      # the only container that ever holds the real key.
+      - name: Run the onboarding E2E
+        env:
+          OPENAI_MODE: ${{ inputs.openai }}
+          CORTECHO_IMAGE: ${{ inputs.image || 'cortecho:onboarding' }}
+        run: bash onboarding/scripts/run.sh
+
+      - name: Set up Node.js
+        if: always()
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # GitHub Pages project sites live under the lower-case owner/repo; an
+      # <owner>.github.io repository is the exception and sits at the root.
+      - name: Compute the Pages URL
+        if: always()
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          repo="${GITHUB_REPOSITORY#*/}"
+          repo="${repo,,}"
+          if [[ "$repo" == "$owner.github.io" ]]; then
+            url="https://$repo"
+          else
+            url="https://$owner.github.io/$repo"
+          fi
+          echo "PAGES_URL=$url" >> "$GITHUB_ENV"
+
+      - name: Write the job summary
+        if: always()
+        run: node onboarding/scripts/summary.ts --assets-base-url "$PAGES_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: onboarding-report-${{ github.run_number }}
+          path: onboarding/out/
+          retention-days: 30
+          if-no-files-found: warn
+
+      # The Pages environment rule allows deployments from main only, so the
+      # site is prepared and uploaded only there. The artifact above exists on
+      # every branch.
+      - name: Prepare the Pages site
+        if: always() && github.ref == 'refs/heads/main' && hashFiles('onboarding/out/report/index.html') != ''
+        run: |
+          rm -rf onboarding/site
+          mkdir -p onboarding/site
+          cp -r onboarding/out/report/. onboarding/site/
+          if [ -d onboarding/out/steps ]; then cp -r onboarding/out/steps onboarding/site/steps; fi
+
+      - name: Upload the Pages artifact
+        id: pages
+        if: always() && github.ref == 'refs/heads/main' && hashFiles('onboarding/out/report/index.html') != ''
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: onboarding/site
+
+  pages:
+    needs: onboarding
+    if: always() && needs.onboarding.outputs.pages == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy the report
+        id: deployment
+        uses: actions/deploy-pages@v5

@@ -1,0 +1,93 @@
+name: cortecho-onboarding
+
+# Everything runs on one private /24. Only the gateway is also on `wan`, the
+# only network with egress. There are no published ports and no bind mounts:
+# the suite must also work from a container that drives the host's Docker
+# daemon, where repository paths do not exist on the host.
+services:
+  cortecho:
+    image: ${CORTECHO_IMAGE:-cortecho:onboarding}
+    environment:
+      # A fixed test secret (32 zero bytes, base64). Not a production key.
+      CORTECHO_SECRET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      OPENAI_BASE_URL: http://${ONBOARDING_SUBNET:-10.231.47}.30:8080/v1
+      LOG_LEVEL: debug
+    volumes:
+      - cortecho-data:/app/data
+    networks:
+      lan:
+        ipv4_address: ${ONBOARDING_SUBNET:-10.231.47}.10
+    depends_on:
+      openai-gw:
+        condition: service_healthy
+
+  echo-kitchen:
+    build:
+      context: ..
+      dockerfile: onboarding/echo-sim/Dockerfile
+    environment:
+      ECHO_BIND: 0.0.0.0
+      ECHO_PORT: "26053"
+      ECHO_CONTROL_PORT: "8080"
+      ECHO_NODE_NAME: ${ECHO_NODE_NAME:-echo-dot-2-5c0e11}
+      ECHO_FRIENDLY_NAME: ${ECHO_FRIENDLY_NAME:-Echo Dot 2 5c0e11}
+      ECHO_MAC: ${ECHO_MAC:-02:42:0a:e7:2f:15}
+      ECHO_SPEECH_DBFS: "-26"
+      ECHO_ROOM_DBFS: "-60"
+      ECHO_WAKE_DBFS: "-38"
+    networks:
+      lan:
+        ipv4_address: ${ONBOARDING_SUBNET:-10.231.47}.21
+
+  openai-gw:
+    build:
+      context: ..
+      dockerfile: onboarding/openai-gw/Dockerfile
+    environment:
+      OPENAI_MODE: ${OPENAI_MODE:-mock}
+      # The real key lives only here; Cortecho only ever sees the dummy one.
+      OPENAI_API_KEY: ${OPENAI_API_KEY_E2E:-}
+    networks:
+      lan:
+        ipv4_address: ${ONBOARDING_SUBNET:-10.231.47}.30
+      wan: {}
+
+  runner:
+    build:
+      context: ..
+      dockerfile: onboarding/runner/Dockerfile
+    environment:
+      BASE_URL: http://${ONBOARDING_SUBNET:-10.231.47}.10:3000
+      ECHO_URL: http://${ONBOARDING_SUBNET:-10.231.47}.21:8080
+      GATEWAY_URL: http://${ONBOARDING_SUBNET:-10.231.47}.30:8080
+      ECHO_HOST: ${ONBOARDING_SUBNET:-10.231.47}.21
+      ECHO_PORT: "26053"
+      ECHO_FRIENDLY_NAME: ${ECHO_FRIENDLY_NAME:-Echo Dot 2 5c0e11}
+      OPENAI_MODE: ${OPENAI_MODE:-mock}
+      ONBOARDING_IMAGE: ${CORTECHO_IMAGE:-cortecho:onboarding}
+      ONBOARDING_COMMIT: ${ONBOARDING_COMMIT:-unknown}
+      ONBOARDING_RUN_NUMBER: ${ONBOARDING_RUN_NUMBER:-local}
+      ONBOARDING_TOTAL_STEPS: "12"
+      ONBOARDING_STARTED_AT: ${ONBOARDING_STARTED_AT:-}
+    networks:
+      lan:
+        ipv4_address: ${ONBOARDING_SUBNET:-10.231.47}.40
+    depends_on:
+      cortecho:
+        condition: service_healthy
+      echo-kitchen:
+        condition: service_healthy
+      openai-gw:
+        condition: service_healthy
+    command: ["sleep", "infinity"]
+
+networks:
+  lan:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ONBOARDING_SUBNET:-10.231.47}.0/24
+  wan: {}
+
+volumes:
+  cortecho-data:

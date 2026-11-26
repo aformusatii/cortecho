@@ -1,0 +1,8 @@
+{
+  "name": "@cortecho/onboarding-runner",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@playwright/test": "1.64.1"
+  }
+}
