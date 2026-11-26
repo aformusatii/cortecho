@@ -12,6 +12,7 @@ COPY onboarding/runner/playwright.config.ts ./
 COPY onboarding/runner/specs ./specs
 COPY onboarding/runner/lib ./lib
 COPY onboarding/scripts/summary.ts ./summary.ts
+COPY onboarding/scripts/proof.ts ./proof.ts
 
 RUN mkdir -p /out/steps /out/media /out/blobs /out/artifacts /out/report
 

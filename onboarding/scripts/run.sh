@@ -55,6 +55,7 @@ run_phase() {
   "${COMPOSE[@]}" exec -T \
     -e PLAYWRIGHT_BLOB_OUTPUT_FILE="/out/blobs/$phase.zip" \
     -e PWTEST_BLOB_DO_NOT_REMOVE=1 \
+    -e ONBOARDING_OUTPUT_DIR="/out/artifacts/$phase" \
     runner npx playwright test --grep "@$phase"
   code=$?
   set -e
@@ -90,19 +91,23 @@ set +e
   -e PLAYWRIGHT_JSON_OUTPUT_FILE=/out/results.json \
   runner npx playwright merge-reports --reporter=html,json /out/blobs
 merge_status=$?
-if [[ "$merge_status" -eq 0 ]]; then
-  # The HTML report is self-contained; the raw blob zips and artifact
-  # directory would only double the uploaded artifact.
-  "${COMPOSE[@]}" exec -T runner rm -rf /out/blobs /out/artifacts || true
-fi
 "${COMPOSE[@]}" exec -T runner node -e \
   'fetch(process.env.GATEWAY_URL + "/calls").then((r) => r.text()).then((t) => require("node:fs").writeFileSync("/out/openai-calls.json", t)).catch(() => {})' \
   >/dev/null 2>&1
 "${COMPOSE[@]}" exec -T runner node /tests/summary.ts
 summary_status=$?
+# proof.ts copies the two test videos out of /out/artifacts itself, so the raw
+# artifacts must still exist here.
+"${COMPOSE[@]}" exec -T runner node /tests/proof.ts
+proof_status=$?
+if [[ "$merge_status" -eq 0 && "$summary_status" -eq 0 && "$proof_status" -eq 0 ]]; then
+  # The merged HTML report and the proof are self-contained; the raw blob zips
+  # and artifact directory would only double the uploaded artifact.
+  "${COMPOSE[@]}" exec -T runner rm -rf /out/blobs /out/artifacts || true
+fi
 "${COMPOSE[@]}" cp runner:/out/. "$OUT"/ || true
 set -e
-if [[ "$merge_status" -ne 0 || "$summary_status" -ne 0 ]]; then
+if [[ "$merge_status" -ne 0 || "$summary_status" -ne 0 || "$proof_status" -ne 0 ]]; then
   result=1
 else
   # The earlier phase copies brought the raw blob zips and artifacts to the

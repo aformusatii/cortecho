@@ -151,16 +151,22 @@ for (const [spec, specSteps] of bySpec) {
   }
   lines.push('');
   if (assetsBase) {
-    lines.push('<details>');
-    lines.push('<summary>Step screenshots</summary>');
+    lines.push('### Step screenshots');
     lines.push('');
-    for (const step of specSteps) {
-      lines.push(
-        `![${String(step.n).padStart(2, '0')} · ${step.title}](${assetUrl(step.screenshot, runNumber)})`,
-      );
+    lines.push('<table>');
+    for (let index = 0; index < specSteps.length; index += 2) {
+      lines.push('<tr>');
+      for (const step of specSteps.slice(index, index + 2)) {
+        const source = assetUrl(step.screenshot, runNumber);
+        const caption = `${step.status === 'passed' ? '✅' : '❌'} ${String(step.n).padStart(2, '0')} · ${escapeHtml(step.title)} (${formatSeconds(step.durationMs)})`;
+        lines.push(
+          `<td width="420" valign="top"><img src="${source}" width="420" alt="${escapeHtml(step.title)}"><br>${caption}</td>`,
+        );
+      }
+      if (specSteps.length - index === 1) lines.push('<td width="420"></td>');
+      lines.push('</tr>');
     }
-    lines.push('');
-    lines.push('</details>');
+    lines.push('</table>');
     lines.push('');
   }
 }
@@ -276,6 +282,15 @@ function mediaLink(file: string | undefined): string {
 
 function yesNo(value: boolean): string {
   return value ? 'yes' : 'no';
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function sizeText(bytes: number): string {

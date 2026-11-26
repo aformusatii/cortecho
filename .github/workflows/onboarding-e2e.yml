@@ -101,6 +101,58 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
+      # archive: false makes each file its own artifact, opening directly in
+      # the browser instead of downloading a zip.
+      - name: Upload the HTML proof
+        id: proof_html
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: onboarding-proof.html
+          path: onboarding/out/proof/onboarding-proof.html
+          archive: false
+          if-no-files-found: ignore
+
+      - name: Upload the PNG proof
+        id: proof_png
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: onboarding-proof.png
+          path: onboarding/out/proof/onboarding-proof.png
+          archive: false
+          if-no-files-found: ignore
+
+      - name: Upload the PDF proof
+        id: proof_pdf
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: onboarding-proof.pdf
+          path: onboarding/out/proof/onboarding-proof.pdf
+          archive: false
+          if-no-files-found: ignore
+
+      - name: Upload the onboarding video
+        id: proof_setup_video
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: onboarding-1-setup.webm
+          path: onboarding/out/proof/onboarding-1-setup.webm
+          archive: false
+          if-no-files-found: ignore
+
+      - name: Upload the after-restart video
+        id: proof_restart_video
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: onboarding-2-after-restart.webm
+          path: onboarding/out/proof/onboarding-2-after-restart.webm
+          archive: false
+          if-no-files-found: ignore
+
       # The Pages environment rule allows deployments from main only, so the
       # site is prepared and uploaded only there. The artifact above exists on
       # every branch.
@@ -118,6 +170,25 @@ jobs:
         uses: actions/upload-pages-artifact@v5
         with:
           path: onboarding/site
+
+      - name: Add the proof links to the summary
+        if: always()
+        env:
+          HTML_URL: ${{ steps.proof_html.outputs.artifact-url }}
+          PNG_URL: ${{ steps.proof_png.outputs.artifact-url }}
+          PDF_URL: ${{ steps.proof_pdf.outputs.artifact-url }}
+          SETUP_VIDEO_URL: ${{ steps.proof_setup_video.outputs.artifact-url }}
+          RESTART_VIDEO_URL: ${{ steps.proof_restart_video.outputs.artifact-url }}
+        run: |
+          {
+            echo ''
+            echo '### Proof (opens in the browser, no zip)'
+            for entry in "HTML:$HTML_URL" "PNG:$PNG_URL" "PDF:$PDF_URL" "Onboarding video:$SETUP_VIDEO_URL" "After-restart video:$RESTART_VIDEO_URL"; do
+              label="${entry%%:*}"
+              url="${entry#*:}"
+              if [[ -n "$url" ]]; then echo "- [$label]($url)"; fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
   pages:
     needs: onboarding

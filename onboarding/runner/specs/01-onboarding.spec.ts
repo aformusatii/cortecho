@@ -1,6 +1,13 @@
-import { expect, type APIRequestContext, test } from '@playwright/test';
+import { type APIRequestContext, expect, test } from '@playwright/test';
+import {
+  type EchoRun,
+  type EchoState,
+  echoJson,
+  gatewayJson,
+  type OpenAiCall,
+  waitFor,
+} from '../lib/echo.ts';
 import { ECHO_FRIENDLY_NAME, ECHO_HOST, ECHO_PORT, OPENAI_MODE, REPLY_ORIGIN } from '../lib/env.ts';
-import { type EchoRun, type EchoState, echoJson, gatewayJson, type OpenAiCall, waitFor } from '../lib/echo.ts';
 import { collectFacts } from '../lib/facts.ts';
 import { runStep, type StepFact } from '../lib/steps.ts';
 
@@ -97,15 +104,15 @@ test.describe('Onboarding', { tag: '@setup' }, () => {
         async (capture) => {
           await expect(page.getByRole('heading', { name: 'Add your Echo' })).toBeVisible();
           await expect(page.getByText('Step 4 of 4')).toBeVisible();
-          const radio = page.getByRole('radio', { name: new RegExp(ECHO_FRIENDLY_NAME.replace(/\./g, '\\.')) });
+          const radio = page.getByRole('radio', {
+            name: new RegExp(ECHO_FRIENDLY_NAME.replace(/\./g, '\\.')),
+          });
           await expect(radio).toBeVisible({ timeout: 60_000 });
 
           const response = await request.get('/api/discovery');
           expect(response.status(), await response.text()).toBe(200);
           const discovery = (await response.json()) as Discovery;
-          const found = discovery.found.find(
-            (echo) => echo.host === ECHO_HOST && echo.port === ECHO_PORT,
-          );
+          const found = discovery.found.find((echo) => echo.host === ECHO_HOST && echo.port === ECHO_PORT);
           expect(found, `the scan should list ${ECHO_HOST}:${ECHO_PORT}`).toBeTruthy();
           expect(['scan', 'both']).toContain(found?.source);
 

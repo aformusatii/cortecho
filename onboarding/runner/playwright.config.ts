@@ -11,7 +11,7 @@ export default defineConfig({
   // A real voice turn takes seconds; adoption and reconnects take tens more.
   timeout: 300_000,
   expect: { timeout: 30_000 },
-  outputDir: '/out/artifacts',
+  outputDir: process.env.ONBOARDING_OUTPUT_DIR ?? '/out/artifacts',
   reporter: [['blob'], ['list']],
   use: {
     ...devices['Desktop Chrome'],

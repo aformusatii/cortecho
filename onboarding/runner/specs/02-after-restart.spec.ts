@@ -1,6 +1,6 @@
-import { expect, type APIRequestContext, test } from '@playwright/test';
-import { OPENAI_MODE } from '../lib/env.ts';
+import { type APIRequestContext, expect, test } from '@playwright/test';
 import { type EchoRun, type EchoState, echoJson, waitFor } from '../lib/echo.ts';
+import { OPENAI_MODE } from '../lib/env.ts';
 import { collectFacts, type ReconnectFact } from '../lib/facts.ts';
 import { runStep, type StepFact } from '../lib/steps.ts';
 
@@ -20,7 +20,10 @@ async function readTurns(request: APIRequestContext, deviceId: number): Promise<
 }
 
 test.describe('After a restart', { tag: '@restart' }, () => {
-  test('The Echo keeps working after the container and the Echo restart', async ({ page, request }, testInfo) => {
+  test('The Echo keeps working after the container and the Echo restart', async ({
+    page,
+    request,
+  }, testInfo) => {
     const steps: StepFact[] = [];
     const reconnects: ReconnectFact[] = [];
     let failure: unknown;
@@ -92,10 +95,7 @@ test.describe('After a restart', { tag: '@restart' }, () => {
             async () => {
               const state = await echoJson<EchoState>('/state');
               return (
-                state.keyState === 'set' &&
-                state.subscribed &&
-                state.encrypted &&
-                state.timeAnswers.keyed
+                state.keyState === 'set' && state.subscribed && state.encrypted && state.timeAnswers.keyed
               );
             },
             { what: 'the Echo to reconnect with its stored key after the reboot', timeoutMs: 90_000 },
@@ -154,10 +154,9 @@ test.describe('After a restart', { tag: '@restart' }, () => {
           await page.goto('/');
           const turns = page.getByRole('region', { name: 'Latest turns' });
           await expect(turns).toBeVisible();
-          await expect(turns).toContainText(
-            OPENAI_MODE === 'real' ? /time/i : 'What time is it?',
-            { timeout: 30_000 },
-          );
+          await expect(turns).toContainText(OPENAI_MODE === 'real' ? /time/i : 'What time is it?', {
+            timeout: 30_000,
+          });
           await capture();
         },
         steps,
