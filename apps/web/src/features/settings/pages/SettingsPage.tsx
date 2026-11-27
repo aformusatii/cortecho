@@ -296,6 +296,7 @@ function SettingsDocumentForm({ tab }: { tab: SettingsTab }) {
     voices: elevenLabsVoices.data?.voices ?? [],
     // The query is disabled without a key; the picker still needs the reason.
     voicesReason: hasElevenLabsKey ? elevenLabsVoices.data?.reason : 'no-key',
+    voicesSource: hasElevenLabsKey ? elevenLabsVoices.data?.source : undefined,
     modelsReason: hasElevenLabsKey ? elevenLabsModels.data?.reason : 'no-key',
     listenPreview: voicePreview,
     providerValues: draft,

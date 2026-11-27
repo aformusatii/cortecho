@@ -1,6 +1,7 @@
 import {
   type DeviceStatus,
   type ElevenLabsVoice,
+  type ElevenLabsVoiceSource,
   type ProviderListReason,
   SETTINGS_SECTION_LABELS,
   type SectionId,
@@ -24,6 +25,7 @@ export type SettingsSectionProps = {
   elevenLabsModels?: readonly string[];
   voices?: readonly ElevenLabsVoice[];
   voicesReason?: ProviderListReason;
+  voicesSource?: ElevenLabsVoiceSource;
   modelsReason?: ProviderListReason;
   listenPreview?: VoicePreview;
   providerValues?: FormValues;
@@ -52,6 +54,7 @@ export function SettingsSection({
   elevenLabsModels = [],
   voices = [],
   voicesReason,
+  voicesSource,
   modelsReason,
   listenPreview,
   providerValues,
@@ -73,6 +76,7 @@ export function SettingsSection({
         elevenLabsModels={elevenLabsModels}
         voices={voices}
         voicesReason={voicesReason}
+        voicesSource={voicesSource}
         modelsReason={modelsReason}
         listenPreview={listenPreview}
         providerValues={providerValues}

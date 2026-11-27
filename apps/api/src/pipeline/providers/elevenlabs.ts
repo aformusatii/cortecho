@@ -7,6 +7,7 @@ import type {
 } from '@cortecho/shared';
 import { pcmToWav } from '../audio.ts';
 import { type ElevenLabsVoiceProvider, NotConfiguredError, PCM_SAMPLE_RATE } from '../services.ts';
+import { ELEVENLABS_PREMADE_VOICES } from './elevenlabs-premade.ts';
 
 export const ELEVENLABS_BASE_URL = 'https://api.elevenlabs.io';
 /** ElevenLabs' `speed` range for TTS voice settings. */
@@ -70,57 +71,123 @@ function clampedSpeed(speed: number): number {
   return Math.min(SPEED_MAX, Math.max(SPEED_MIN, speed));
 }
 
+type RawElevenLabsVoice = {
+  voice_id?: unknown;
+  name?: unknown;
+  category?: unknown;
+  description?: unknown;
+  preview_url?: unknown;
+  labels?: Record<string, unknown>;
+};
+
+/** Map the `/v2/voices` and anonymous `/v1/voices` bodies the same way. */
+function mapElevenLabsVoices(body: { voices?: RawElevenLabsVoice[] }): ElevenLabsVoicesResponse['voices'] {
+  const label = (value: unknown): string | undefined =>
+    typeof value === 'string' && value !== '' ? value : undefined;
+  return (body.voices ?? [])
+    .filter((voice) => typeof voice.voice_id === 'string' && typeof voice.name === 'string')
+    .map((voice) => ({
+      id: voice.voice_id as string,
+      name: voice.name as string,
+      ...(label(voice.category) ? { category: label(voice.category) } : {}),
+      ...(label(voice.labels?.accent) ? { accent: label(voice.labels?.accent) } : {}),
+      ...(label(voice.labels?.gender) ? { gender: label(voice.labels?.gender) } : {}),
+      ...((label(voice.description) ?? label(voice.labels?.description))
+        ? { description: label(voice.description) ?? label(voice.labels?.description) }
+        : {}),
+      ...(label(voice.preview_url) ? { previewUrl: label(voice.preview_url) } : {}),
+    }));
+}
+
+/** A voice list plus whether only the built-in snapshot answered. */
+export type ElevenLabsVoicesResult = {
+  response: ElevenLabsVoicesResponse;
+  /** The service caches this briefly: the next request should retry the network. */
+  fromSnapshot: boolean;
+};
+
+/**
+ * ElevenLabs' default voices, which `/v1/voices` serves without a key. A scoped
+ * key can speak but cannot read `/v2/voices`; this keeps the picker readable.
+ * The request never carries the key, and the built-in snapshot is the offline
+ * and broken-gateway last resort.
+ */
+async function premadeVoices({
+  baseUrl,
+  fetchImpl,
+  signal,
+  timeoutMs,
+  reason,
+}: {
+  baseUrl: string | undefined;
+  fetchImpl: typeof fetch;
+  signal: AbortSignal;
+  timeoutMs: number;
+  reason?: ProviderListReason;
+}): Promise<ElevenLabsVoicesResult> {
+  try {
+    const response = await fetchImpl(endpoint(baseUrl, '/v1/voices'), {
+      headers: { Accept: 'application/json' },
+      signal: requestSignal(signal, timeoutMs),
+    });
+    if (response.ok) {
+      const voices = mapElevenLabsVoices((await response.json()) as { voices?: RawElevenLabsVoice[] });
+      if (voices.length > 0) {
+        return {
+          response: { voices, ...(reason ? { reason } : {}), source: 'premade' },
+          fromSnapshot: false,
+        };
+      }
+    }
+  } catch {
+    // Fall through to the snapshot: the picker must still show names.
+  }
+  return {
+    response: {
+      voices: ELEVENLABS_PREMADE_VOICES.map((voice) => ({ ...voice })),
+      ...(reason ? { reason } : {}),
+      source: 'premade',
+    },
+    fromSnapshot: true,
+  };
+}
+
 /**
  * The ElevenLabs account's voices, with the names and labels the picker shows.
- * An empty list carries the reason, so the UI can say why (no key, a scoped
- * key, or an unreachable provider) instead of blaming the key.
+ * A scoped key (or a provider that cannot answer) falls back to the default
+ * voices; the original reason is kept so the UI can explain why. An empty
+ * account list also falls back, because an empty picker is never useful.
  */
-export async function listElevenLabsVoices({
+export async function listElevenLabsVoicesDetailed({
   apiKey,
   baseUrl,
   fetchImpl = fetch,
   signal = new AbortController().signal,
   timeoutMs = 5000,
-}: RequestOptions): Promise<ElevenLabsVoicesResponse> {
+}: RequestOptions): Promise<ElevenLabsVoicesResult> {
+  let reason: ProviderListReason | undefined;
   try {
     const response = await fetchImpl(endpoint(baseUrl, '/v2/voices'), {
       headers: { 'xi-api-key': apiKey, Accept: 'application/json' },
       signal: requestSignal(signal, timeoutMs),
     });
-    if (!response.ok) {
-      const reason = listFailureReason(response.status, await failureDetail(response));
-      return { voices: [], reason };
+    if (response.ok) {
+      const voices = mapElevenLabsVoices((await response.json()) as { voices?: RawElevenLabsVoice[] });
+      if (voices.length > 0) {
+        return { response: { voices, source: 'account' }, fromSnapshot: false };
+      }
+      return premadeVoices({ baseUrl, fetchImpl, signal, timeoutMs });
     }
-    const body = (await response.json()) as {
-      voices?: {
-        voice_id?: unknown;
-        name?: unknown;
-        category?: unknown;
-        description?: unknown;
-        preview_url?: unknown;
-        labels?: Record<string, unknown>;
-      }[];
-    };
-    const label = (value: unknown): string | undefined =>
-      typeof value === 'string' && value !== '' ? value : undefined;
-    return {
-      voices: (body.voices ?? [])
-        .filter((voice) => typeof voice.voice_id === 'string' && typeof voice.name === 'string')
-        .map((voice) => ({
-          id: voice.voice_id as string,
-          name: voice.name as string,
-          ...(label(voice.category) ? { category: label(voice.category) } : {}),
-          ...(label(voice.labels?.accent) ? { accent: label(voice.labels?.accent) } : {}),
-          ...(label(voice.labels?.gender) ? { gender: label(voice.labels?.gender) } : {}),
-          ...((label(voice.description) ?? label(voice.labels?.description))
-            ? { description: label(voice.description) ?? label(voice.labels?.description) }
-            : {}),
-          ...(label(voice.preview_url) ? { previewUrl: label(voice.preview_url) } : {}),
-        })),
-    };
+    reason = listFailureReason(response.status, await failureDetail(response));
   } catch {
-    return { voices: [], reason: 'unavailable' };
+    reason = 'unavailable';
   }
+  return premadeVoices({ baseUrl, fetchImpl, signal, timeoutMs, reason });
+}
+
+/** The response-only view used by tests and callers that do not cache. */
+export async function listElevenLabsVoices(options: RequestOptions): Promise<ElevenLabsVoicesResponse> {
+  return (await listElevenLabsVoicesDetailed(options)).response;
 }
 
 /** The account's models; the web UI filters the text-to-speech ones. */

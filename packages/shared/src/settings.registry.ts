@@ -533,7 +533,7 @@ const settings: readonly SettingDescriptor[] = [
     key: 'tts.elevenlabsVoiceId',
     section: 'voice',
     label: 'ElevenLabs voice',
-    help: 'Pick a voice from your account by name, or paste a voice id.',
+    help: 'Pick an ElevenLabs voice by name, or paste a voice id.',
     schema: z.string().min(1).max(100),
     default: DEFAULT_ELEVENLABS_VOICE_ID,
     control: 'combobox',

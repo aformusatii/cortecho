@@ -201,6 +201,49 @@ test.describe('Settings page', () => {
     await expect(page.getByText(/ElevenLabs is not configured/).first()).toBeVisible();
   });
 
+  test('shows default voice names when the key cannot list the account', async ({ page, request }) => {
+    // The e2e base URL is a closed local port, so both voice-list calls fail
+    // offline and the built-in snapshot answers with ElevenLabs' default voices.
+    const before = (await (await request.get('/api/settings')).json()) as { version: number };
+    await request.patch('/api/settings', {
+      data: { version: before.version, changes: { 'elevenlabs.apiKey': 'el-test-key' } },
+    });
+    try {
+      await page.goto('/settings');
+      await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
+      await openSettingsSection(page, 'voice');
+      await page.getByLabel('Text-to-speech provider', { exact: true }).selectOption('elevenlabs');
+
+      // The stored id is the default George voice, shown by its readable name.
+      const voice = page.locator('#setting-tts-elevenlabsVoiceId');
+      await expect(voice).toHaveValue('George - Warm, Captivating Storyteller');
+      await expect(page.getByText('JBFqnCBsd6RMkjVDRZzb', { exact: true })).toBeVisible();
+      await expect(page.getByText(/Showing ElevenLabs' default voices/)).toBeVisible();
+
+      // The list is usable offline and the chevron opens it.
+      await voice.click();
+      await expect(
+        page.getByRole('option', { name: /George - Warm, Captivating Storyteller/ }),
+      ).toBeVisible();
+
+      // A half-typed search is not a voice id: leaving the field reverts it.
+      await voice.fill('geo');
+      await voice.press('Tab');
+      await expect(voice).toHaveValue('George - Warm, Captivating Storyteller');
+
+      // Searching and pressing Enter on the only match picks it by name.
+      await voice.fill('Daniel');
+      await voice.press('Enter');
+      await expect(voice).toHaveValue('Daniel - Steady Broadcaster');
+      await expect(page.getByText('onwK4e9ZLuTAKqWW03F9', { exact: true })).toBeVisible();
+    } finally {
+      const current = (await (await request.get('/api/settings')).json()) as { version: number };
+      await request.patch('/api/settings', {
+        data: { version: current.version, changes: { 'elevenlabs.apiKey': null } },
+      });
+    }
+  });
+
   test('starts the sample audio inside the click, for both providers', async ({ page }) => {
     // The e2e server has no provider keys: answer the sample request ourselves
     // with a valid 10 ms silent WAV (8 kHz, mono, 16-bit).

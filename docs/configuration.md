@@ -171,12 +171,15 @@ Details that matter:
 - **Listen here.** Next to the voice field, **Listen here** synthesizes the
   draft voice with the selected provider and plays a WAV in this browser (no
   Echo, no save). **Play on an Echo** does the same through an Echo. The
-  per-voice samples in the ElevenLabs picker come from the account list and are
-  proxied by `/api/settings/elevenlabs-voices/:id/preview`.
+  per-voice samples in the ElevenLabs picker come from the server-side voice
+  list (account or default voices) and are proxied by
+  `/api/settings/elevenlabs-voices/:id/preview`.
 - **ElevenLabs key permissions.** Text to speech and speech to text need only
   the key itself. The optional voice and model lists need **Voices → Read** and
-  **Models → Read**; a key without them still works for speech, is reported as
-  valid by **Test key**, and the form falls back to a pasted voice id.
+  **Models → Read**; a key without them still works for speech and is reported
+  as valid by **Test key**. Without **Voices → Read**, the picker offers
+  ElevenLabs' default voices; your own and cloned voices still need that
+  permission, or you can paste their id.
 - **Secrets are write-only.** `GET /api/settings` returns `hasKeys`, never the
   OpenAI or ElevenLabs key; `GET /api/devices` returns `hasKey`, never the Echo
   key. Both live plaintext in SQLite: the database file is the crown jewel.
@@ -195,8 +198,9 @@ Details that matter:
 - **`tts.model`** defaults to `gpt-4o-mini-tts`, which OpenAI shuts down on
   **2027-01-06**. Set a supported speech model before then, or set the voice
   provider to ElevenLabs, or use the Realtime API work on the roadmap.
-- **ElevenLabs voice ids** can be picked from the account's voices (with a
-  browser sample) or pasted; `JBFqnCBsd6RMkjVDRZzb` is the premade "George".
+- **ElevenLabs voice ids** can be picked by name from the account's voices, or
+  from ElevenLabs' default voices when the key cannot list the account (with a
+  browser sample), or pasted; `JBFqnCBsd6RMkjVDRZzb` is the premade "George".
 - **`network.replyBaseUrl`** is how the Echos reach this app on the LAN
   (`http://192.168.1.10:3000`). It is empty on purpose in development, where
   the link's local address is used. In Docker set it once under

@@ -9,7 +9,10 @@ const PORT = 3200;
 // SYSTEM_PROMPT_FILE is empty so the one-time import never reads the owner's
 // private SystemPrompt.md, and TZ is fixed so the screenshots do not show the
 // machine's zone. e2e/global-setup.ts then writes the fictional demo prompt.
-const E2E_ENV = `TZ=Europe/Berlin SYSTEM_PROMPT_FILE= DATABASE_PATH=./data/e2e.db PORT=${PORT} ECHO_HOST= OPENAI_API_KEY= CORTECHO_SECRET_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= PUBLIC_BASE_URL=http://localhost:${PORT} DISCOVERY_EXTRA_TARGETS=127.0.0.1:26101,127.0.0.1:26102`;
+// ELEVENLABS_BASE_URL points at a deliberately closed local port: a keyed voice
+// list fails fast and falls back to the built-in default voices, so e2e never
+// touches the real ElevenLabs API.
+const E2E_ENV = `TZ=Europe/Berlin SYSTEM_PROMPT_FILE= DATABASE_PATH=./data/e2e.db PORT=${PORT} ECHO_HOST= OPENAI_API_KEY= CORTECHO_SECRET_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= PUBLIC_BASE_URL=http://localhost:${PORT} DISCOVERY_EXTRA_TARGETS=127.0.0.1:26101,127.0.0.1:26102 ELEVENLABS_BASE_URL=http://127.0.0.1:26999`;
 
 export default defineConfig({
   testDir: '.',

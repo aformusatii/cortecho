@@ -237,6 +237,9 @@ export function TuningTab({ device }: { device: DeviceStatus }) {
                     voicesReason={
                       global.data?.hasKeys['elevenlabs.apiKey'] === true ? voices.data?.reason : 'no-key'
                     }
+                    voicesSource={
+                      global.data?.hasKeys['elevenlabs.apiKey'] === true ? voices.data?.source : undefined
+                    }
                     listenPreview={voicePreview}
                     headerAction={
                       <Switch

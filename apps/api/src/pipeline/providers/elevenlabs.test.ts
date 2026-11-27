@@ -1,7 +1,12 @@
 import { buildSettings, DEFAULT_SETTINGS, type Settings } from '@cortecho/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NotConfiguredError, PCM_SAMPLE_RATE } from '../services.ts';
-import { checkElevenLabsKey, createElevenLabsProvider } from './elevenlabs.ts';
+import {
+  checkElevenLabsKey,
+  createElevenLabsProvider,
+  listElevenLabsVoices,
+  listElevenLabsVoicesDetailed,
+} from './elevenlabs.ts';
 
 function settings(changes: Record<string, unknown> = {}): Settings {
   return buildSettings({ ...DEFAULT_SETTINGS, ...changes });
@@ -156,6 +161,113 @@ describe('ElevenLabs key check', () => {
       ok: false,
       code: 'rejected',
     });
+  });
+});
+
+describe('ElevenLabs voice list fallback', () => {
+  const scoped = () =>
+    Response.json(
+      {
+        detail: {
+          type: 'authentication_error',
+          code: 'unauthorized',
+          status: 'missing_permissions',
+          message: 'The API key you used is missing the permission voices_read to execute this operation.',
+        },
+      },
+      { status: 401 },
+    );
+
+  const premade = {
+    voice_id: 'premade-george',
+    name: 'George - Warm, Captivating Storyteller',
+    category: 'premade',
+    labels: { accent: 'british', gender: 'male' },
+    description: 'Warm resonance.',
+    preview_url: 'https://cdn.example.test/george.mp3',
+  };
+
+  const mappedPremade = {
+    id: 'premade-george',
+    name: 'George - Warm, Captivating Storyteller',
+    category: 'premade',
+    accent: 'british',
+    gender: 'male',
+    description: 'Warm resonance.',
+    previewUrl: 'https://cdn.example.test/george.mp3',
+  };
+
+  it('falls back to the anonymous /v1/voices list without sending the key', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    stubFetch(async (url, init) => {
+      calls.push({ url, init });
+      if (url.endsWith('/v2/voices')) return scoped();
+      if (url.endsWith('/v1/voices')) return Response.json({ voices: [premade] });
+      return new Response('not found', { status: 404 });
+    });
+    const result = await listElevenLabsVoices({ apiKey: 'scoped-key' });
+
+    expect(result).toEqual({
+      voices: [mappedPremade],
+      reason: 'missing-permission',
+      source: 'premade',
+    });
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://api.elevenlabs.io/v2/voices',
+      'https://api.elevenlabs.io/v1/voices',
+    ]);
+    expect(calls[0]?.init?.headers).toMatchObject({ 'xi-api-key': 'scoped-key' });
+    expect(calls[1]?.init?.headers).toEqual({ Accept: 'application/json' });
+  });
+
+  it('uses the built-in snapshot when the anonymous call also fails', async () => {
+    stubFetch(async (url) => (url.endsWith('/v2/voices') ? scoped() : new Response('down', { status: 500 })));
+    const result = await listElevenLabsVoicesDetailed({ apiKey: 'scoped-key' });
+
+    expect(result.fromSnapshot).toBe(true);
+    expect(result.response.source).toBe('premade');
+    expect(result.response.reason).toBe('missing-permission');
+    expect(result.response.voices).toHaveLength(21);
+    expect(result.response.voices).toContainEqual(
+      expect.objectContaining({
+        id: 'JBFqnCBsd6RMkjVDRZzb',
+        name: 'George - Warm, Captivating Storyteller',
+      }),
+    );
+  });
+
+  it('keeps a successful keyed list as the account source and makes no second request', async () => {
+    const fetchMock = stubFetch(async () =>
+      Response.json({ voices: [{ voice_id: 'account-voice', name: 'My Voice' }] }),
+    );
+    const result = await listElevenLabsVoices({ apiKey: 'full-key' });
+
+    expect(result).toEqual({
+      voices: [{ id: 'account-voice', name: 'My Voice' }],
+      source: 'account',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the default voices when the account list is empty', async () => {
+    const fetchMock = stubFetch(async (url) =>
+      url.endsWith('/v2/voices') ? Response.json({ voices: [] }) : Response.json({ voices: [premade] }),
+    );
+    const result = await listElevenLabsVoices({ apiKey: 'empty-key' });
+
+    expect(result).toEqual({ voices: [mappedPremade], source: 'premade' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses a custom base URL for both requests', async () => {
+    const urls: string[] = [];
+    stubFetch(async (url) => {
+      urls.push(url);
+      return url.endsWith('/v2/voices') ? scoped() : Response.json({ voices: [premade] });
+    });
+    await listElevenLabsVoices({ apiKey: 'key', baseUrl: 'http://gw:8080/elevenlabs/' });
+
+    expect(urls).toEqual(['http://gw:8080/elevenlabs/v2/voices', 'http://gw:8080/elevenlabs/v1/voices']);
   });
 });
 

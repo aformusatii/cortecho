@@ -1,4 +1,10 @@
-import type { ElevenLabsVoice, ProviderListReason, SettingDescriptor, VoicePreview } from '@cortecho/shared';
+import type {
+  ElevenLabsVoice,
+  ElevenLabsVoiceSource,
+  ProviderListReason,
+  SettingDescriptor,
+  VoicePreview,
+} from '@cortecho/shared';
 import { displayValue, type FormValues, isFieldVisible } from '../draft.ts';
 import { SettingField } from './SettingField.tsx';
 
@@ -13,6 +19,8 @@ export type SettingsFieldsProps = {
   voices?: readonly ElevenLabsVoice[];
   /** Why that list is empty. */
   voicesReason?: ProviderListReason;
+  /** Whether those voices are the account's or ElevenLabs' defaults. */
+  voicesSource?: ElevenLabsVoiceSource;
   /** Why the ElevenLabs model list is empty (static suggestions remain). */
   modelsReason?: ProviderListReason;
   /** The draft voice, for "Listen here" on the voice fields. */
@@ -42,6 +50,7 @@ export function SettingsFields({
   elevenLabsModels = [],
   voices = [],
   voicesReason,
+  voicesSource,
   modelsReason,
   listenPreview,
   providerValues,
@@ -64,6 +73,7 @@ export function SettingsFields({
       suggestions={suggestionsFor(descriptor, models, elevenLabsModels)}
       voices={voices}
       voicesReason={voicesReason}
+      voicesSource={voicesSource}
       modelsReason={modelsReason}
       listenPreview={listenPreview}
       secretSet={hasKeys[descriptor.key]}

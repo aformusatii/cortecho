@@ -117,14 +117,84 @@ describe('ElevenLabs provider routes', () => {
       '/api/settings',
       patch({ version: 0, changes: { 'elevenlabs.apiKey': 'scoped-key' } }),
     );
-    expect(await (await ctx.app.request('/api/settings/elevenlabs-voices')).json()).toEqual({
-      voices: [],
-      reason: 'missing-permission',
-    });
+    const voices = (await (
+      await ctx.app.request('/api/settings/elevenlabs-voices')
+    ).json()) as ElevenLabsVoicesResponse;
+    expect(voices.reason).toBe('missing-permission');
+    expect(voices.source).toBe('premade');
+    expect(voices.voices).toHaveLength(21);
+    expect(voices.voices).toContainEqual(
+      expect.objectContaining({
+        id: 'JBFqnCBsd6RMkjVDRZzb',
+        name: 'George - Warm, Captivating Storyteller',
+      }),
+    );
     expect(await (await ctx.app.request('/api/settings/elevenlabs-models')).json()).toEqual({
       models: [],
       reason: 'missing-permission',
     });
+  });
+
+  it('serves the anonymous default voices and proxies a text/plain sample as audio/mpeg', async () => {
+    const previewCalls: string[] = [];
+    const scoped = () =>
+      Response.json(
+        {
+          detail: {
+            type: 'authentication_error',
+            status: 'missing_permissions',
+            message: 'The API key you used is missing the permission voices_read to execute this operation.',
+          },
+        },
+        { status: 401 },
+      );
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/v2/voices')) return scoped();
+      if (url.endsWith('/v1/voices')) {
+        return Response.json({
+          voices: [
+            {
+              voice_id: 'premade-george',
+              name: 'George - Warm, Captivating Storyteller',
+              category: 'premade',
+              labels: { accent: 'british', gender: 'male' },
+              preview_url: 'https://cdn.example.test/premade-george.mp3',
+            },
+          ],
+        });
+      }
+      if (url === 'https://cdn.example.test/premade-george.mp3') {
+        previewCalls.push(url);
+        return new Response(new Uint8Array([4, 5, 6]), {
+          status: 200,
+          headers: { 'content-type': 'text/plain' },
+        });
+      }
+      return new Response('not found', { status: 404 });
+    });
+    ctx = createTestRuntime({ fetchImpl });
+    await ctx.app.request(
+      '/api/settings',
+      patch({ version: 0, changes: { 'elevenlabs.apiKey': 'scoped-key' } }),
+    );
+
+    const voices = (await (
+      await ctx.app.request('/api/settings/elevenlabs-voices')
+    ).json()) as ElevenLabsVoicesResponse;
+    expect(voices.source).toBe('premade');
+    expect(voices.reason).toBe('missing-permission');
+    expect(voices.voices).toHaveLength(1);
+
+    const preview = await ctx.app.request('/api/settings/elevenlabs-voices/premade-george/preview');
+    expect(preview.status).toBe(200);
+    expect(preview.headers.get('content-type')).toBe('audio/mpeg');
+    expect(Buffer.from(await preview.arrayBuffer())).toEqual(Buffer.from([4, 5, 6]));
+    expect(previewCalls).toEqual(['https://cdn.example.test/premade-george.mp3']);
+
+    const unknown = await ctx.app.request('/api/settings/elevenlabs-voices/not-listed/preview');
+    expect(unknown.status).toBe(404);
+    expect(previewCalls).toHaveLength(1);
   });
 
   it('lists voices with labels and the preview URL, and models with their capability', async () => {

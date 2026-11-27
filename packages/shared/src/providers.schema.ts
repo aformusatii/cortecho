@@ -28,9 +28,22 @@ export type ElevenLabsVoice = z.infer<typeof elevenLabsVoiceSchema>;
 export const PROVIDER_LIST_REASONS = ['no-key', 'missing-permission', 'unavailable'] as const;
 export type ProviderListReason = (typeof PROVIDER_LIST_REASONS)[number];
 
+/**
+ * Where a voice list came from. `account` is the keyed `/v2/voices` list;
+ * `premade` is ElevenLabs' default voices, read without a key from `/v1/voices`
+ * or from the built-in snapshot when that call cannot answer.
+ */
+export const ELEVENLABS_VOICE_SOURCES = ['account', 'premade'] as const;
+export type ElevenLabsVoiceSource = (typeof ELEVENLABS_VOICE_SOURCES)[number];
+
 export type ElevenLabsVoicesResponse = {
   voices: ElevenLabsVoice[];
+  /**
+   * Why the account list failed. Kept when `source` is `premade`, so the UI can
+   * still explain the fallback instead of implying the key is missing.
+   */
   reason?: ProviderListReason;
+  source?: ElevenLabsVoiceSource;
 };
 
 /** One model of GET https://api.elevenlabs.io/v1/models. */

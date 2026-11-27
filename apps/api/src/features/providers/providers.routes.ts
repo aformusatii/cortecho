@@ -58,9 +58,12 @@ export function createProviderRoutes(
         if (!upstream.ok || !upstream.body) {
           throw new AppError(404, 'NOT_FOUND', 'The voice sample is not available.');
         }
+        // Premade samples are mp3s served as text/plain by the public bucket.
+        const upstreamType = upstream.headers.get('content-type') ?? '';
+        const contentType = /^audio\//i.test(upstreamType) ? upstreamType : 'audio/mpeg';
         return new Response(upstream.body, {
           headers: {
-            'Content-Type': upstream.headers.get('content-type') ?? 'audio/mpeg',
+            'Content-Type': contentType,
             'Cache-Control': PREVIEW_CACHE,
           },
         });
