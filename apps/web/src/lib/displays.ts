@@ -47,9 +47,16 @@ export function formatSeconds(ms: number | undefined): string {
 }
 
 /** A saved setting value as the history shows it (never a secret's value). */
-export function formatSettingValue(value: unknown, scope: 'global' | 'device' = 'global'): string {
+export function formatSettingValue(
+  value: unknown,
+  scope: 'global' | 'device' = 'global',
+  optionLabels?: Record<string, string>,
+): string {
   if (value === null || value === undefined) return scope === 'device' ? '(inherited)' : '(default)';
-  if (typeof value === 'string') return value === '' ? '(empty)' : value;
+  if (typeof value === 'string') {
+    if (value === '') return '(empty)';
+    return optionLabels?.[value] ?? value;
+  }
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   if (Array.isArray(value)) return value.length === 0 ? '(empty)' : value.join(', ');
   return JSON.stringify(value);

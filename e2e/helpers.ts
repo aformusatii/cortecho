@@ -24,9 +24,9 @@ export async function saveScreenshot(page: Page, testInfo: TestInfo, name: strin
   });
 }
 
-/** The status page has loaded the health document (the OpenAI card always renders). */
+/** The status page has loaded the health document (the Providers card always renders). */
 export async function waitForStatus(page: Page) {
-  await expect(page.getByRole('region', { name: 'OpenAI' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Providers' })).toBeVisible();
 }
 
 /** A device on a FakeEcho (kind `test` by default, so it is not announced to). */

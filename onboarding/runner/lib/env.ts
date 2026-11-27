@@ -5,6 +5,9 @@ export const ECHO_HOST = process.env.ECHO_HOST ?? '10.231.47.21';
 export const ECHO_PORT = Number(process.env.ECHO_PORT ?? '26053');
 export const ECHO_FRIENDLY_NAME = process.env.ECHO_FRIENDLY_NAME ?? 'Echo Dot 2 5c0e11';
 export const OPENAI_MODE = process.env.OPENAI_MODE ?? 'mock';
+/** mock, real, or skip (a real run without ELEVENLABS_API_KEY_E2E). */
+export const ELEVENLABS_MODE = process.env.ELEVENLABS_MODE ?? 'mock';
+export const ELEVENLABS_ENABLED = process.env.ELEVENLABS_ENABLED !== 'false';
 export const REPLY_ORIGIN = new URL(BASE_URL).origin;
 export const OUT = '/out';
 export const STEPS_DIR = `${OUT}/steps`;

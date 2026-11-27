@@ -30,6 +30,7 @@ Run everything from the repository root.
 | `npm run test:e2e` | Playwright against a production build, 3 viewports (two FakeEchos, no real Echo, no OpenAI key) |
 | `npm run test:smoke` | **Production smoke tests**: a simulated Echo ("Test Echo") against the *deployed* Cortecho, real OpenAI. Never in CI; needs `smoke/.env.smoke`, the deployment and money. **Ask the owner first** (see Smoke tests below) |
 | `npm run test:onboarding` | **Docker onboarding E2E**: a fresh install of the shipped image, the real /24 scan and voice turn, all inside the `cortecho-onboarding` Compose project. Mock OpenAI by default; `OPENAI_MODE=real` needs `OPENAI_API_KEY_E2E` |
+| `npm run test:integration` | The same Docker suite as an integration layer: provider matrix, "Listen here" (Chromium + WebKit) and an announcement. ElevenLabs runs in mock mode, in real mode with `ELEVENLABS_API_KEY_E2E`, or skips with a reason |
 | `npm run smoke:init` | Generates the simulated Echo's identity and writes `smoke/.env.smoke` (once) |
 | `npm run doctor` | Read-only configuration/link diagnostics |
 | `npm run db:generate` | New migration after editing `apps/api/src/db/schema.ts` |
@@ -105,12 +106,14 @@ apps/api/src/
   vad/end-of-speech.ts    energy VAD (adaptive noise floor): ends requests, as HA does
   features/settings/      SQLite store, per-Echo overrides, validation, one-time import, routes
   features/devices/       SQLite CRUD, one client + pipeline per Echo, identity checks, adopt/secure, routes
+  features/providers/     ElevenLabs voices/models, voice preview proxy, provider key checks, routes
   features/discovery/     mDNS browse + subnet probe, ignore list, /api/discovery routes
   features/setup/         onboarding state (app_state) and the OpenAI check, /api/setup routes
   features/turns/         SQLite history (newest 1000)
   features/voice/         /api/turns, /api/say, /api/ask, /api/reply-audio
   doctor/                 read-only checks behind the CLI and GET /api/doctor
-  pipeline/               services, OpenAI, agent, sessions, prompt layers, turn state machine
+  pipeline/               services, agent, sessions, prompt layers, turn state machine
+  pipeline/providers/     OpenAI (STT/TTS/Responses) and ElevenLabs (STT/TTS) implementations
   tools/                  registry, index, plugins/*.ts
   scripts/                fake-echo, echo-set-key, doctor
 apps/api/drizzle/         generated SQL migrations - committed, never edited by hand
@@ -125,8 +128,9 @@ smoke/                    production smoke tests (not a workspace; not in `npm t
                           voice (TTS cache, levels, transcription), report, matchers, cleanup
   scenarios/              *.smoke.ts, one file per area
   .env.smoke.example      every SMOKE_* variable; the real .env.smoke, .runs/, .cache/ are gitignored
-onboarding/               on-demand Docker onboarding E2E: echo-sim, OpenAI gateway, Playwright
-                          runner and run.sh (not a workspace; results in onboarding/out/)
+onboarding/               on-demand Docker integration + onboarding E2E: echo-sim, AI gateway
+                          (OpenAI + ElevenLabs), Playwright runner and run.sh (not a workspace;
+                          results in onboarding/out/)
 docs/                     user and contributor documentation
 ```
 
@@ -166,7 +170,7 @@ docs/                     user and contributor documentation
 - **New connector type:** one entry in `packages/shared/src/mcp.catalog.ts`
   (URL, auth quirks, scopes, guide anchor) and a `docs/connectors.md` section.
   No new code: the Add dialog and the form are generated from the catalog.
-- **Realtime API mode:** a new implementation next to `pipeline/openai.ts`
+- **Realtime API mode:** a new implementation next to `pipeline/providers/openai.ts`
   behind a `PIPELINE_MODE` setting; keep the turn-based pipeline as the
   fallback. Needed before `gpt-4o-mini-tts` shuts down on 2027-01-06.
 

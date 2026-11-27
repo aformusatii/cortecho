@@ -159,7 +159,7 @@ describe('SettingsStore', () => {
           name,
           kind: 'echo',
           host: '192.168.1.50',
-          port: 26053,
+          port: 26052 + id,
           apiKey: null,
           enabled: true,
           prompt: '',
@@ -186,12 +186,37 @@ describe('SettingsStore', () => {
 
     it('rejects keys that are not perEcho, and inherits with null', () => {
       register();
-      expect(() => ctx.settings.applyDevice(1, { 'tts.model': 'tts-1' }, 0)).toThrow(SettingsValidationError);
+      expect(() => ctx.settings.applyDevice(1, { 'agent.model': 'gpt-4.1' }, 0)).toThrow(
+        SettingsValidationError,
+      );
       expect(() => ctx.settings.applyDevice(1, { 'nope.nope': 1 }, 0)).toThrow(SettingsValidationError);
       ctx.settings.applyDevice(1, { 'vad.endSilenceMs': 600 }, 0);
       const snapshot = ctx.settings.applyDevice(1, { 'vad.endSilenceMs': null }, 1);
       expect(snapshot.settings.vad.endSilenceMs).toBe(DEFAULT_SETTINGS['vad.endSilenceMs']);
       expect(ctx.settings.deviceOverrides(1)).toEqual({});
+    });
+
+    it('lets each Echo pick its own providers and models, leaving the global layer alone', () => {
+      register(1, 'Kitchen');
+      register(2, 'Study');
+      ctx.settings.applyDevice(
+        1,
+        {
+          'stt.provider': 'elevenlabs',
+          'stt.elevenlabsModel': 'scribe_v2',
+          'tts.provider': 'elevenlabs',
+          'tts.elevenlabsStability': 0.8,
+        },
+        0,
+      );
+      expect(ctx.settings.forDevice(1).settings).toMatchObject({
+        stt: { provider: 'elevenlabs', elevenlabsModel: 'scribe_v2' },
+        tts: { provider: 'elevenlabs', elevenlabsStability: 0.8 },
+      });
+      expect(ctx.settings.forDevice(2).settings.stt.provider).toBe('openai');
+      expect(ctx.settings.forDevice(null).settings.tts.provider).toBe('openai');
+      expect(ctx.settings.overrideCount(1)).toBe(4);
+      expect(ctx.settings.overrideCount(2)).toBe(0);
     });
 
     it('does not store a value equal to the global layer', () => {

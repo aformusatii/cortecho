@@ -141,7 +141,7 @@ function HistoryRow({
         <p className="text-xs break-words text-muted-foreground">
           {descriptor?.secret
             ? 'key changed (values are never stored)'
-            : `${formatSettingValue(change.oldValue, scopeKind)} → ${formatSettingValue(change.newValue, scopeKind)}`}
+            : `${formatSettingValue(change.oldValue, scopeKind, descriptor?.optionLabels)} → ${formatSettingValue(change.newValue, scopeKind, descriptor?.optionLabels)}`}
         </p>
         <p className="text-xs text-muted-foreground">
           {scope} · {formatTime(change.at)} · v{change.version}

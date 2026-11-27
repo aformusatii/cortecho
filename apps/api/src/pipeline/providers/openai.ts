@@ -1,31 +1,24 @@
-import { buildSettings, DEFAULT_SETTINGS, type Settings } from '@cortecho/shared';
+import type { Settings } from '@cortecho/shared';
 import OpenAI, { toFile } from 'openai';
-import type { Config } from '../config.ts';
-import type { ToolRegistry } from '../tools/registry.ts';
-import { type CreateResponse, ResponsesAgent } from './agent.ts';
-import { pcmToWav } from './audio.ts';
-import { NotConfiguredError, type SpeechToText, type TextToSpeech, type VoiceServices } from './services.ts';
-
-/** OpenAI's `pcm` speech format: 24 kHz, 16-bit signed LE, mono. */
-export const OPENAI_PCM_RATE = 24_000;
+import type { Config } from '../../config.ts';
+import type { CreateResponse } from '../agent.ts';
+import { pcmToWav } from '../audio.ts';
+import { NotConfiguredError, type OpenAiVoice, PCM_SAMPLE_RATE } from '../services.ts';
 
 /**
- * Builds the OpenAI-backed services. The key is a setting now, so the client
- * is created on first use and replaced when the key changes; the timeout is
- * passed per request because it is a setting too. The key is only handed to
- * the SDK: it is never logged or stored anywhere else.
+ * The OpenAI side of a turn: speech-to-text, the streamed Responses call and
+ * text-to-speech. The key is a setting, so the client is created on first use
+ * and replaced when the key changes; the timeout is passed per request because
+ * it is a setting too. The key is only handed to the SDK: it is never logged
+ * or stored anywhere else.
  */
-export function createOpenAiServices(
-  config: Pick<Config, 'openai'>,
-  tools: ToolRegistry,
-  settings: () => Settings = () => buildSettings(DEFAULT_SETTINGS),
-): VoiceServices {
+export function createOpenAiProvider(config: Pick<Config, 'openai'>): OpenAiVoice {
   const baseURL = config.openai.baseUrl;
   let cached: { key: string; client: OpenAI } | null = null;
 
   const clientFor = (current: Settings): OpenAI => {
     const key = current.openai.apiKey;
-    if (!key) throw new NotConfiguredError();
+    if (!key) throw new NotConfiguredError('openai');
     if (!cached || cached.key !== key) {
       cached = { key, client: new OpenAI({ apiKey: key, baseURL, maxRetries: 1 }) };
     }
@@ -37,30 +30,6 @@ export function createOpenAiServices(
     signal,
     timeout: current.openai.timeoutMs,
   });
-
-  const speechToText: SpeechToText = {
-    async transcribe(pcm, sampleRate, signal, current) {
-      const file = await toFile(pcmToWav(pcm, sampleRate), 'utterance.wav', { type: 'audio/wav' });
-      // gpt-transcribe takes a list of `languages`; older models take one `language`.
-      const languageHint =
-        current.stt.languages.length === 0
-          ? {}
-          : current.stt.model.startsWith('gpt-transcribe')
-            ? { languages: current.stt.languages }
-            : { language: current.stt.languages[0] };
-      const result = await clientFor(current).audio.transcriptions.create(
-        {
-          model: current.stt.model,
-          file,
-          response_format: 'json',
-          ...(current.stt.prompt ? { prompt: current.stt.prompt } : {}),
-          ...languageHint,
-        },
-        requestOptions(current, signal),
-      );
-      return result.text.trim();
-    },
-  };
 
   const createResponse: CreateResponse = async (request, signal, onTextDelta, current) => {
     // Streamed, so the pipeline can start speaking the first sentence while
@@ -107,8 +76,8 @@ export function createOpenAiServices(
    * this request leaves an open connection for the turn's first real one.
    * It carries no key; the 401 it gets is all it needs.
    */
-  const warmUp = (): void => {
-    if (!settings().openai.apiKey) return;
+  const warmUp = (current: Settings): void => {
+    if (!current.openai.apiKey) return;
     fetch(`${baseURL ?? 'https://api.openai.com/v1'}/models`, {
       method: 'HEAD',
       signal: AbortSignal.timeout(5000),
@@ -117,8 +86,30 @@ export function createOpenAiServices(
       .catch(() => {});
   };
 
-  const textToSpeech: TextToSpeech = {
-    sampleRate: OPENAI_PCM_RATE,
+  return {
+    async transcribe(pcm, sampleRate, signal, current) {
+      const file = await toFile(pcmToWav(pcm, sampleRate), 'utterance.wav', { type: 'audio/wav' });
+      // gpt-transcribe takes a list of `languages`; older models take one `language`.
+      const languageHint =
+        current.stt.languages.length === 0
+          ? {}
+          : current.stt.model.startsWith('gpt-transcribe')
+            ? { languages: current.stt.languages }
+            : { language: current.stt.languages[0] };
+      const result = await clientFor(current).audio.transcriptions.create(
+        {
+          model: current.stt.model,
+          file,
+          response_format: 'json',
+          ...(current.stt.prompt ? { prompt: current.stt.prompt } : {}),
+          ...languageHint,
+        },
+        requestOptions(current, signal),
+      );
+      return result.text.trim();
+    },
+
+    sampleRate: PCM_SAMPLE_RATE,
     async *synthesize(text, signal, current) {
       const response = await clientFor(current).audio.speech.create(
         {
@@ -139,15 +130,9 @@ export function createOpenAiServices(
         yield Buffer.from(chunk);
       }
     },
-  };
 
-  return {
-    stt: speechToText,
-    agent: new ResponsesAgent({ createResponse, tools }),
-    tts: textToSpeech,
-    get configured() {
-      return Boolean(settings().openai.apiKey);
-    },
+    createResponse,
+    configured: (current) => Boolean(current.openai.apiKey),
     warmUp,
   };
 }

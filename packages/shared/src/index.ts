@@ -5,6 +5,8 @@ export * from './error.schema.ts';
 export * from './ip.ts';
 export * from './mcp.catalog.ts';
 export * from './mcp.schema.ts';
+export * from './pipeline-stages.ts';
+export * from './providers.schema.ts';
 export * from './settings.registry.ts';
 export * from './settings.schema.ts';
 export * from './setup.schema.ts';

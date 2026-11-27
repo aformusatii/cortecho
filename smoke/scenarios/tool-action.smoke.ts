@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { resultExcerpt } from '../harness/report.ts';
 import { useSmokeEcho } from '../harness/smoke-echo.ts';
 
 // Owner decision 2026-11-21: a clear request runs the tool at once, with no
@@ -18,7 +19,19 @@ describe('a clear request runs the tool at once', () => {
     const done = await echo.wake(`Save an email draft to myself saying ${subject}`);
     expect(done.listensAgain).toBe(false);
     expect(done.said ?? '').not.toMatch(CONFIRM_QUESTION);
-    expect(done.turn?.toolCalls.map((call) => call.name).join(' ')).toMatch(/mail|draft|message/i);
+    const calls = done.turn?.toolCalls ?? [];
+    const call = calls.find((candidate) => /mail|draft|message/i.test(candidate.name));
+    if (!call) {
+      throw new Error(
+        `expected a mail/draft tool call, saw: ${calls.map((candidate) => candidate.name).join(', ') || '(none)'}`,
+      );
+    }
+    // The name alone is not enough: an unauthorized connector answers with a
+    // friendly "I couldn't save the draft" while the call itself failed.
+    expect(
+      call.ok === true && call.pending !== true,
+      `${call.name} ${call.pending ? 'is pending (not run)' : 'failed'}: ${resultExcerpt(call.result)}`,
+    ).toBe(true);
     expect(done.wire).toEndWith(['tts_end', 'run_end']);
 
     // Exactly one message: the double-action class of bug. Skipped (reported,

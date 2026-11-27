@@ -33,6 +33,8 @@ jobs:
     # secrets context itself is not available there).
     env:
       OPENAI_API_KEY_E2E: ${{ secrets.OPENAI_API_KEY_E2E }}
+      # Optional: when absent in real mode, the ElevenLabs scenarios skip.
+      ELEVENLABS_API_KEY_E2E: ${{ secrets.ELEVENLABS_API_KEY_E2E }}
     outputs:
       pages: ${{ steps.pages.outcome }}
     steps:

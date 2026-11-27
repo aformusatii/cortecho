@@ -69,7 +69,7 @@ export function VoiceTestPhrase({
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
         {description ??
-          'Hear the voice with the values in this form, before saving. This plays a phrase and saves nothing.'}
+          'Hear the voice on a real Echo with the values in this form, before saving. This plays a phrase and saves nothing. Use “Listen here” to hear it in this browser.'}
       </p>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <div className="flex-1 space-y-1.5">
@@ -105,7 +105,7 @@ export function VoiceTestPhrase({
           onClick={handlePlay}
           disabled={say.isPending || !trimmed || choices.length === 0}
         >
-          <Volume2Icon aria-hidden="true" /> {say.isPending ? 'Playing…' : 'Play'}
+          <Volume2Icon aria-hidden="true" /> {say.isPending ? 'Playing…' : 'Play on an Echo'}
         </Button>
       </div>
       {choices.length === 0 && (

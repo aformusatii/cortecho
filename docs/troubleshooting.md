@@ -33,5 +33,5 @@ for a spoken yes`, and `[confirm]` for the confirm-by-voice barrier.
 | A tool failed and the assistant carried on as if nothing happened | Fixed 2026-11-18: the failure is now a `warn` log line, a red tool call in the status page (click it for the error and stack), and a tool that fails cannot be retried in the same turn — the model must report it |
 | The Echo reads out `<tool_call>{…}` | No longer spoken: the model wrote a tool call as text. The log shows `[agent] model wrote … as text`; a `listen_for_reply` written this way still keeps the microphone open, any other is dropped (not run). If it keeps happening, try another model |
 | Asked to confirm the same action twice | See the `[confirm]` log lines and [connectors troubleshooting](connectors.md#troubleshooting) |
-| `OPENAI_API_KEY missing` on the status page | The key is not stored. Add it in **Setup → Connect OpenAI** (or under **Settings → Advanced**) |
+| `Provider key missing` on the status page | The key for a provider a stage uses is not stored. Add it in **Setup → Connect OpenAI** (or under **Settings → Providers**) |
 | Search answers are cut off | Raise **Maximum answer length**: reasoning and search queries share the token budget |

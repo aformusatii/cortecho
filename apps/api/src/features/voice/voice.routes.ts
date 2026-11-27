@@ -1,7 +1,9 @@
 import {
   askRequestSchema,
   type Health,
+  type HealthStage,
   type SayResult,
+  type Settings,
   sayRequestSchema,
   turnsQuerySchema,
 } from '@cortecho/shared';
@@ -15,19 +17,53 @@ import { EchoUnavailableError, type VoicePipeline } from '../../pipeline/voice-p
 import type { Device } from '../devices/devices.repository.ts';
 import type { VoiceRuntime } from './voice-runtime.ts';
 
-/** The health document: every Echo, OpenAI config, the last turn. */
+/** The health document: every Echo, the provider of each stage, the last turn. */
 export function buildHealth(runtime: VoiceRuntime): Health {
-  const { services, tools, turns, startedAt, settings: store, devices } = runtime;
+  const { tools, turns, startedAt, settings: store, devices } = runtime;
   const { settings, version } = store.current();
+  const hasOpenAiKey = store.hasSecret('openai.apiKey');
+  const hasElevenLabsKey = store.hasSecret('elevenlabs.apiKey');
+  const stageConfigured = (provider: 'openai' | 'elevenlabs'): boolean =>
+    provider === 'elevenlabs' ? hasElevenLabsKey : hasOpenAiKey;
+  /** The audio stages one snapshot resolves to (keys stay global). */
+  const stagesOf = (current: Settings): { stt: HealthStage; tts: HealthStage } => ({
+    stt: {
+      provider: current.stt.provider,
+      model: current.stt.provider === 'elevenlabs' ? current.stt.elevenlabsModel : current.stt.model,
+      configured: stageConfigured(current.stt.provider),
+    },
+    tts: {
+      provider: current.tts.provider,
+      model: current.tts.provider === 'elevenlabs' ? current.tts.elevenlabsVoiceId : current.tts.voice,
+      configured: stageConfigured(current.tts.provider),
+    },
+  });
+  const globalStages = stagesOf(settings);
+  // Only the Echos a provider override actually changes: the status page can
+  // warn about one without showing every Echo's inherited values.
+  const echoOverrides = devices.list().flatMap((device) => {
+    const stages = stagesOf(store.forDevice(device.id).settings);
+    const changed =
+      stages.stt.provider !== globalStages.stt.provider ||
+      stages.stt.model !== globalStages.stt.model ||
+      stages.tts.provider !== globalStages.tts.provider ||
+      stages.tts.model !== globalStages.tts.model;
+    return changed ? [{ deviceId: device.id, deviceName: device.name, ...stages }] : [];
+  });
   return {
     status: 'ok',
     uptimeSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000),
     devices: devices.list(),
     openai: {
-      configured: services.configured,
+      configured: hasOpenAiKey,
       sttModel: settings.stt.model,
       agentModel: settings.agent.model,
       ttsModel: settings.tts.model,
+    },
+    providers: {
+      ...globalStages,
+      thinking: { provider: 'openai', model: settings.agent.model, configured: hasOpenAiKey },
+      echoOverrides,
     },
     tools: [...tools.names, ...(settings.agent.webSearch ? ['web_search'] : [])],
     connectors: runtime.mcp.health(),
@@ -43,7 +79,7 @@ function toAppError(error: unknown): AppError {
     return new AppError(error.code === 'ECHO_BUSY' ? 409 : 503, error.code, error.message);
   }
   if (error instanceof NotConfiguredError) {
-    return new AppError(503, 'UPSTREAM_ERROR', 'OpenAI is not configured (no API key in Settings).');
+    return new AppError(503, 'UPSTREAM_ERROR', error.message);
   }
   return new AppError(502, 'UPSTREAM_ERROR', `The request failed: ${errorMessage(error)}`);
 }
@@ -69,11 +105,7 @@ async function sayOn(
       return { ...base, ok: false, error: { code: error.code, message: error.message } };
     }
     if (error instanceof NotConfiguredError) {
-      return {
-        ...base,
-        ok: false,
-        error: { code: 'UPSTREAM_ERROR', message: 'OpenAI is not configured (no API key in Settings).' },
-      };
+      return { ...base, ok: false, error: { code: 'UPSTREAM_ERROR', message: error.message } };
     }
     return { ...base, ok: false, error: { code: 'UPSTREAM_ERROR', message: errorMessage(error) } };
   }

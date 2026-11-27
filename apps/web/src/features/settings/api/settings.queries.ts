@@ -1,4 +1,10 @@
-import type { InstructionsDocument, SettingsChange, SettingsDocument } from '@cortecho/shared';
+import type {
+  ElevenLabsModelsResponse,
+  ElevenLabsVoicesResponse,
+  InstructionsDocument,
+  SettingsChange,
+  SettingsDocument,
+} from '@cortecho/shared';
 import { queryOptions } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/api-client.ts';
 
@@ -12,6 +18,8 @@ export const settingsKeys = {
   changes: (limit: number, scope: string | null) => ['settings', 'changes', limit, scope] as const,
   instructions: ['settings', 'instructions'] as const,
   models: ['settings', 'models'] as const,
+  elevenLabsVoices: ['settings', 'elevenlabs-voices'] as const,
+  elevenLabsModels: ['settings', 'elevenlabs-models'] as const,
 };
 
 /** The live settings form: no polling, the version is carried by every save. */
@@ -50,6 +58,32 @@ export function openaiModelsQueryOptions() {
   return queryOptions({
     queryKey: settingsKeys.models,
     queryFn: ({ signal }) => apiRequest<{ models: string[] }>('/api/openai/models', { signal }),
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+}
+
+/**
+ * The ElevenLabs voices and models for the pickers. Both degrade to empty
+ * lists without a key, so a missing key never blocks the form.
+ */
+export function elevenLabsVoicesQueryOptions(enabled: boolean) {
+  return queryOptions({
+    queryKey: settingsKeys.elevenLabsVoices,
+    queryFn: ({ signal }) =>
+      apiRequest<ElevenLabsVoicesResponse>('/api/settings/elevenlabs-voices', { signal }),
+    enabled,
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+}
+
+export function elevenLabsModelsQueryOptions(enabled: boolean) {
+  return queryOptions({
+    queryKey: settingsKeys.elevenLabsModels,
+    queryFn: ({ signal }) =>
+      apiRequest<ElevenLabsModelsResponse>('/api/settings/elevenlabs-models', { signal }),
+    enabled,
     staleTime: 10 * 60_000,
     retry: false,
   });

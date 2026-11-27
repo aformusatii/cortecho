@@ -17,9 +17,9 @@ a spoken answer from your own LLM agent with your own tools.
 Cortecho is the missing piece for
 [echo-dot-assist](https://github.com/Gamer92000/echo-dot-assist): that project
 frees an Echo from Amazon, and Cortecho gives it a brain. It speaks the
-ESPHome native API to `hassmic` on the device, turns speech into text, runs an
-agent, and sends the answer back as audio the Echo plays. One instance can
-serve several Echos.
+ESPHome native API to `hassmic` on the device, turns speech into text (OpenAI
+or ElevenLabs), runs an agent, and sends the answer back as audio (OpenAI or
+ElevenLabs voices) the Echo plays. One instance can serve several Echos.
 
 ![The status page of a running Cortecho](docs/screenshots/live-status.png)
 
@@ -59,6 +59,17 @@ is done once.
 
 - **Wake word to spoken answer**: "Computer, what time is it?" → transcript →
   agent → natural voice.
+- **Pick the provider per stage**: speech-to-text and text-to-speech can each
+  use OpenAI or ElevenLabs, in any combination: ElevenLabs Scribe or OpenAI
+  gpt-transcribe/Whisper for speech-to-text, ElevenLabs or OpenAI voices for
+  text-to-speech. Thinking stays on OpenAI.
+- **Hear the voice before saving**: browse the ElevenLabs voices of your
+  account with a sample each, or press **Listen here** to hear the draft voice
+  (OpenAI or ElevenLabs) in the browser — no Echo needed. **Play on an Echo**
+  speaks it through the real hardware.
+- **A visual voice pipeline**: Settings shows Listening → Understanding →
+  Thinking → Voice with the provider and model of each stage, updating as you
+  edit and linking to each section.
 - **Tools**: the model can call your scripts, HTTP endpoints, Home Assistant
   and a built-in web search.
 - **MCP connectors**: connect Gmail, Google Calendar, Home Assistant or any MCP
@@ -96,17 +107,23 @@ Echo's clock. One Cortecho serves every Echo in the house.
 
 Cortecho ends listening itself, transcribes while you finish the sentence,
 and starts speaking from the first sentence of the answer, so the reply plays
-while the rest is still being generated. Every message is in
-[How a turn works](docs/protocol.md).
+while the rest is still being generated. Understanding and Voice can each use
+OpenAI or ElevenLabs (mixed freely); the Thinking step always uses OpenAI.
+Every message is in [How a turn works](docs/protocol.md).
 
 ## What you need
 
 - A rooted Echo with `echo-dot-assist` installed, in ESPHome mode, on the same
   LAN (see [Echo setup](docs/echo-setup.md)).
 - A machine with Docker on that LAN, and a free port (default `3000`).
-- An OpenAI API key, or an OpenAI-compatible server (see
-  [configuration](docs/configuration.md#1-environment-only)); the key is
+- An OpenAI API key for thinking (speech-to-text and text-to-speech can stay
+  on OpenAI too), or an OpenAI-compatible server for the whole OpenAI side
+  (see [configuration](docs/configuration.md#1-environment-only)). The key is
   entered in the UI during setup.
+- Optionally, an ElevenLabs API key: then either audio stage can use ElevenLabs
+  Scribe or ElevenLabs voices instead. Add it under **Settings → Providers**.
+  Speech needs no special scope; the optional voice/model pickers use **Voices
+  → Read** and **Models → Read** when the key has them.
 - A little disk space for the image; the SQLite database is small.
 
 ## Quick start
@@ -152,7 +169,7 @@ knows, plays a sound on it and asks which room it is in. Say the wake word and
 ask "What time is it?".
 
 No file needs editing: the compose file works as downloaded, and the time
-zone, the OpenAI key and the reply address are set in the UI. For the few
+zone, the provider keys and the reply address are set in the UI. For the few
 things that cannot be settings (an OpenAI-compatible server, connectors), copy
 [`cortecho.env.example`](cortecho.env.example) to `cortecho.env` next to the
 compose file and set only what you need. See [deployment](docs/deployment.md)
@@ -240,13 +257,16 @@ supports, so they will probably work; please report yours with the
 device-report issue template.
 
 **Does it work without the cloud?** The default pipeline uses OpenAI. The
-architecture is OpenAI-compatible: `OPENAI_BASE_URL` can point at a local
+OpenAI side is OpenAI-compatible: `OPENAI_BASE_URL` can point at a local
 speech-to-text, LLM and TTS server that implements the Responses API and
-streaming speech. A tested, fully local recipe is still on the roadmap.
+streaming speech. ElevenLabs is a hosted alternative for the two audio stages,
+not a local one. A tested, fully local recipe is still on the roadmap.
 
-**What does it cost to run?** One OpenAI turn is a transcription, one or more
-model requests and one or two speech requests. The status page shows each
-turn's timings; the OpenAI dashboard shows the bill. There is no subscription.
+**What does it cost to run?** One turn is a transcription, one or more model
+requests and one or two speech requests. With ElevenLabs selected those audio
+calls are billed by ElevenLabs instead of OpenAI. The status page shows each
+turn's timings; the provider dashboards show the bill. There is no
+subscription.
 
 **Can it control my smart home?** Yes, through the HTTP tool, scripts, or the
 Home Assistant REST tool. Destructive actions need an explicit allow-list.

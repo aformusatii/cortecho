@@ -140,6 +140,10 @@ export function loadConfig() {
       /** Only for tests / proxies; leave empty for api.openai.com. The key is a setting. */
       baseUrl: optionalStr('OPENAI_BASE_URL'),
     },
+    elevenlabs: {
+      /** Only for tests / proxies; leave empty for api.elevenlabs.io. The key is a setting. */
+      baseUrl: optionalStr('ELEVENLABS_BASE_URL'),
+    },
     tools: {
       /** Per-tool timeout. */
       timeoutMs: int('TOOL_TIMEOUT_MS', 8000, { min: 500 }),

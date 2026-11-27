@@ -36,7 +36,7 @@ describe('GET /api/settings', () => {
     expect(body.stored).toEqual({});
     expect(body.effective['tts.voice']).toBe('marin');
     expect(body.effective).not.toHaveProperty('openai.apiKey');
-    expect(body.hasKeys).toEqual({ 'openai.apiKey': false });
+    expect(body.hasKeys).toEqual({ 'openai.apiKey': false, 'elevenlabs.apiKey': false });
   });
 
   it('imports the environment once and reports it as version 1', async () => {
@@ -128,7 +128,7 @@ describe('secrets', () => {
     const text = await saved.text();
     expect(text).not.toContain('sk-secret-value');
     const body = JSON.parse(text) as SettingsDocument;
-    expect(body.hasKeys).toEqual({ 'openai.apiKey': true });
+    expect(body.hasKeys).toEqual({ 'openai.apiKey': true, 'elevenlabs.apiKey': false });
     expect(body.effective).not.toHaveProperty('openai.apiKey');
 
     const history = await json<SettingsChange[]>(await app.request('/api/settings/changes'));

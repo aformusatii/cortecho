@@ -156,10 +156,10 @@ describe('devices API', () => {
 
     const rejectedModel = await app.request(
       `/api/devices/${device.id}/settings`,
-      patch({ version: 1, changes: { 'tts.model': 'tts-1' } }),
+      patch({ version: 1, changes: { 'agent.model': 'gpt-4.1' } }),
     );
     expect(rejectedModel.status).toBe(400);
-    expect((await json<ApiErrorBody>(rejectedModel)).error.fields).toHaveProperty('tts.model');
+    expect((await json<ApiErrorBody>(rejectedModel)).error.fields).toHaveProperty('agent.model');
 
     const unknown = await app.request(
       `/api/devices/${device.id}/settings`,

@@ -19,14 +19,16 @@ type Device = { id: number; kind: string; name: string; state: string; hasKey: b
 
 async function readSetup(request: APIRequestContext): Promise<Setup> {
   const response = await request.get('/api/setup');
-  expect(response.status(), await response.text()).toBe(200);
-  return (await response.json()) as Setup;
+  const body = await response.text();
+  expect(response.status(), body).toBe(200);
+  return JSON.parse(body) as Setup;
 }
 
 async function listDevices(request: APIRequestContext): Promise<Device[]> {
   const response = await request.get('/api/devices');
-  expect(response.status(), await response.text()).toBe(200);
-  return (await response.json()) as Device[];
+  const body = await response.text();
+  expect(response.status(), body).toBe(200);
+  return JSON.parse(body) as Device[];
 }
 
 test.describe('Onboarding', { tag: '@setup' }, () => {
@@ -110,8 +112,9 @@ test.describe('Onboarding', { tag: '@setup' }, () => {
           await expect(radio).toBeVisible({ timeout: 60_000 });
 
           const response = await request.get('/api/discovery');
-          expect(response.status(), await response.text()).toBe(200);
-          const discovery = (await response.json()) as Discovery;
+          const body = await response.text();
+          expect(response.status(), body).toBe(200);
+          const discovery = JSON.parse(body) as Discovery;
           const found = discovery.found.find((echo) => echo.host === ECHO_HOST && echo.port === ECHO_PORT);
           expect(found, `the scan should list ${ECHO_HOST}:${ECHO_PORT}`).toBeTruthy();
           expect(['scan', 'both']).toContain(found?.source);

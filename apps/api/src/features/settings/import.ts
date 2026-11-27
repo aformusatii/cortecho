@@ -35,9 +35,13 @@ export type ImportResult = {
  */
 export function importSettingsFromEnvironment(
   store: SettingsStore,
-  { env = process.env, promptFile = path.join(REPO_ROOT, 'SystemPrompt.md') }: ImportOptions = {},
+  { env = process.env, promptFile }: ImportOptions = {},
 ): ImportResult | null {
   if (store.version !== 0 || Object.keys(store.storedValues()).length > 0) return null;
+
+  // The path comes from the environment so a run can opt out of a local,
+  // private file (the e2e suite does: an empty value means "no prompt file").
+  const file = promptFile === undefined ? promptFileFromEnvironment(env) : promptFile;
 
   const values: Record<string, unknown> = {};
   for (const descriptor of SETTING_DESCRIPTORS) {
@@ -58,8 +62,8 @@ export function importSettingsFromEnvironment(
   }
 
   let dropped: string[] = [];
-  if (promptFile) {
-    const content = readPromptFile(promptFile);
+  if (file) {
+    const content = readPromptFile(file);
     if (content !== null) {
       const split = extractHouseholdPrompt(content);
       dropped = split.dropped;
@@ -171,6 +175,18 @@ export function extractHouseholdPrompt(content: string): { text: string; dropped
     kept.push(remaining.join(' '));
   }
   return { text: kept.join('\n\n').trim(), dropped };
+}
+
+/**
+ * SYSTEM_PROMPT_FILE is import-only: unset keeps the legacy repo-root file,
+ * empty skips it, and a relative path is resolved from the repository root
+ * (the same base as DATABASE_PATH).
+ */
+function promptFileFromEnvironment(env: NodeJS.ProcessEnv): string | null {
+  const raw = env.SYSTEM_PROMPT_FILE;
+  if (raw === undefined) return path.join(REPO_ROOT, 'SystemPrompt.md');
+  const value = raw.trim();
+  return value ? path.resolve(REPO_ROOT, value) : null;
 }
 
 function readPromptFile(file: string): string | null {

@@ -3,7 +3,11 @@ import {
   type DoctorCheck,
   type DoctorReport,
   type DoctorStatus,
+  ELEVENLABS_STT_MODELS,
+  ELEVENLABS_TTS_MODELS,
+  providerLabel,
   SETTING_DESCRIPTORS,
+  type Settings,
 } from '@cortecho/shared';
 import type { Config } from '../config.ts';
 import { probeEcho } from '../esphome/adopt.ts';
@@ -12,6 +16,8 @@ import { isPrivateIpv4 } from '../features/devices/host.ts';
 import type { SettingsStore } from '../features/settings/settings-store.ts';
 import { parseSecretKey } from '../lib/secret-box.ts';
 import { effectivePolicy, type McpManager, reviewReason } from '../mcp/mcp-manager.ts';
+import { ELEVENLABS_BASE_URL } from '../pipeline/providers/elevenlabs.ts';
+import { missingProviders } from '../pipeline/services.ts';
 
 export type DoctorInput = {
   config: Config;
@@ -63,9 +69,27 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
       'openai key',
       hasOpenAiKey ? 'pass' : 'fail',
       hasOpenAiKey ? 'An OpenAI key is stored (value never printed).' : 'No OpenAI key is stored.',
-      hasOpenAiKey ? undefined : 'Add it under Settings → Advanced → OpenAI API key.',
+      hasOpenAiKey ? undefined : 'Add it under Settings → Providers → OpenAI API key.',
     ),
   );
+
+  const usesElevenLabs =
+    now.settings.stt.provider === 'elevenlabs' || now.settings.tts.provider === 'elevenlabs';
+  if (usesElevenLabs) {
+    const hasElevenLabsKey = settings.hasSecret('elevenlabs.apiKey');
+    checks.push(
+      check(
+        'ElevenLabs key',
+        hasElevenLabsKey ? 'pass' : 'fail',
+        hasElevenLabsKey
+          ? 'An ElevenLabs key is stored (value never printed).'
+          : 'No ElevenLabs key is stored, but a stage uses ElevenLabs.',
+        hasElevenLabsKey ? undefined : 'Add it under Settings → Providers → ElevenLabs API key.',
+      ),
+    );
+    checks.push(...elevenLabsModelChecks(now.settings));
+  }
+  checks.push(...perEchoProviderChecks(settings, devices));
 
   checks.push(staleEnvironmentCheck(settings, env));
 
@@ -97,13 +121,15 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
   }
 
   const ttsModel = now.settings.tts.model;
-  if (['tts-1', 'tts-1-hd', 'gpt-4o-mini-tts'].includes(ttsModel)) {
+  if (now.settings.tts.provider !== 'openai') {
+    checks.push(check('TTS voice', 'pass', `ElevenLabs speaks with ${now.settings.tts.elevenlabsVoiceId}.`));
+  } else if (['tts-1', 'tts-1-hd', 'gpt-4o-mini-tts'].includes(ttsModel)) {
     checks.push(
       check(
         'TTS model',
         'warn',
         `${ttsModel} is deprecated and shuts down on 2027-01-06, and no Speech API model replaces it.`,
-        'Plan the Realtime API mode (see the roadmap); until then the current model still works.',
+        'Plan the Realtime API mode (see the roadmap), or set the voice provider to ElevenLabs.',
       ),
     );
   } else {
@@ -112,6 +138,9 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
 
   checks.push(await replyCheck(now.settings.network.replyBaseUrl, devices, production, fetchImpl));
   checks.push(await openAiCheck(settings, config, fetchImpl));
+  if (usesElevenLabs) {
+    checks.push(await elevenLabsCheck(settings, config.elevenlabs.baseUrl, fetchImpl));
+  }
   checks.push(...connectorChecks(config, input.mcp));
 
   if (input.localBaseUrl && input.sayText) {
@@ -123,6 +152,37 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
     generatedAt: new Date().toISOString(),
     checks,
   };
+}
+
+/**
+ * One Echo may pick an audio provider the global settings do not use. A key
+ * missing only for that Echo is a warning, not a global failure: the rest of
+ * the house keeps working, and the Tuning tab is where the owner changes it.
+ */
+function perEchoProviderChecks(settings: SettingsStore, devices: Device[]): DoctorCheck[] {
+  const globalMissing = new Set(missingProviders(settings.current().settings));
+  const stageNames = { stt: 'speech-to-text', tts: 'text-to-speech' } as const;
+  const checks: DoctorCheck[] = [];
+  for (const device of devices) {
+    const current = settings.forDevice(device.id).settings;
+    for (const provider of missingProviders(current)) {
+      if (globalMissing.has(provider)) continue; // already a global failure
+      const stages = [
+        current.stt.provider === provider ? stageNames.stt : null,
+        current.tts.provider === provider ? stageNames.tts : null,
+      ].filter((stage) => stage !== null);
+      if (stages.length === 0) continue; // thinking is OpenAI-only and global
+      checks.push(
+        check(
+          `${providerLabel(provider)} key (Echo "${device.name}")`,
+          'warn',
+          `This Echo uses ${providerLabel(provider)} for ${stages.join(' and ')}, but no key is stored.`,
+          'Add it under Settings → Providers, or set this Echo back to the global provider.',
+        ),
+      );
+    }
+  }
+  return checks;
 }
 
 function probeCheck(device: Device, result: EchoProbeResult): DoctorCheck {
@@ -285,7 +345,7 @@ async function openAiCheck(
         'OpenAI endpoint',
         'fail',
         `${base} rejected the API key (HTTP ${response.status}).`,
-        'Enter a valid key under Settings → Advanced.',
+        'Enter a valid key under Settings → Providers.',
       );
     if (!response.ok)
       return check(
@@ -307,6 +367,67 @@ async function openAiCheck(
       'fail',
       `Could not reach ${base} (${error instanceof Error ? error.message : String(error)}).`,
       'Check OPENAI_BASE_URL and the network from the container.',
+    );
+  }
+}
+
+function knownModelCheck(name: string, model: string, known: readonly string[]): DoctorCheck {
+  if (known.includes(model)) return check(name, 'pass', `${model} is configured.`);
+  return check(
+    name,
+    'warn',
+    `${model} is not one of the known models (${known.join(', ')}).`,
+    'Pick a known model under Settings → Voice, or keep it if ElevenLabs added it.',
+  );
+}
+
+/** Model checks only for the ElevenLabs stages that are selected. */
+function elevenLabsModelChecks(settings: Settings): DoctorCheck[] {
+  const checks: DoctorCheck[] = [];
+  if (settings.stt.provider === 'elevenlabs') {
+    checks.push(
+      knownModelCheck('ElevenLabs transcription model', settings.stt.elevenlabsModel, ELEVENLABS_STT_MODELS),
+    );
+  }
+  if (settings.tts.provider === 'elevenlabs') {
+    checks.push(
+      knownModelCheck('ElevenLabs voice model', settings.tts.elevenlabsModel, ELEVENLABS_TTS_MODELS),
+    );
+  }
+  return checks;
+}
+
+/** Listing one voice costs nothing and proves the ElevenLabs key works. */
+async function elevenLabsCheck(
+  settings: SettingsStore,
+  baseUrl: string | undefined,
+  fetchImpl: typeof fetch,
+): Promise<DoctorCheck> {
+  const key = settings.current().settings.elevenlabs.apiKey;
+  if (!key) return check('ElevenLabs endpoint', 'skip', 'Skipped: no ElevenLabs key.');
+  const base = (baseUrl ?? ELEVENLABS_BASE_URL).replace(/\/+$/, '');
+  try {
+    const response = await fetchImpl(`${base}/v2/voices?page_size=1`, {
+      headers: { 'xi-api-key': key },
+      signal: AbortSignal.timeout(5000),
+    });
+    void response.body?.cancel().catch(() => {});
+    if (response.status === 401 || response.status === 403)
+      return check(
+        'ElevenLabs endpoint',
+        'fail',
+        `${base} rejected the API key (HTTP ${response.status}).`,
+        'Enter a valid key under Settings → Providers.',
+      );
+    if (!response.ok)
+      return check('ElevenLabs endpoint', 'fail', `${base} answered HTTP ${response.status}.`);
+    return check('ElevenLabs endpoint', 'pass', `${base} accepted the key.`);
+  } catch (error) {
+    return check(
+      'ElevenLabs endpoint',
+      'fail',
+      `Could not reach ${base} (${error instanceof Error ? error.message : String(error)}).`,
+      'Check the network from the container.',
     );
   }
 }

@@ -16,6 +16,12 @@ const IDLE_LABEL = 'Conversation idle time';
 const IDLE_FIELD = 'setting-assistant-sessionIdleMinutes';
 const SAVE = { name: 'Save', exact: true } as const;
 
+// A valid 10 ms silent WAV (8 kHz, mono, 16-bit) for the voice-sample route.
+const SILENT_WAV = Buffer.from(
+  'UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  'base64',
+);
+
 async function openSettings(page: import('@playwright/test').Page) {
   await page.goto('/settings');
   await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
@@ -137,6 +143,196 @@ test.describe('Settings page', () => {
     await dialog.getByRole('button', { name: 'Close' }).click();
   });
 
+  test('shows both provider cards and saves the ElevenLabs key write-only', async ({ page, request }) => {
+    await page.goto('/settings?tab=providers');
+    await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
+    const openaiCard = page.getByTestId('provider-openai');
+    const elevenCard = page.getByTestId('provider-elevenlabs');
+    await expect(openaiCard).toBeVisible();
+    await expect(elevenCard).toBeVisible();
+    await expect(elevenCard).toContainText('No key');
+    await expect(openaiCard).toContainText('Used by: Thinking');
+
+    const version = await settingsVersion(page);
+    try {
+      await page.locator('#setting-elevenlabs-apiKey').fill('el-test-key');
+      await page.getByRole('button', SAVE).click();
+      await expect(page.getByText('Settings saved.').first()).toBeVisible();
+      await expect(elevenCard).toContainText('Key set');
+      // Write-only: the field is reseeded empty, and the API never returns the value.
+      await expect(page.locator('#setting-elevenlabs-apiKey')).toHaveValue('');
+      const document = (await (await request.get('/api/settings')).json()) as {
+        version: number;
+        hasKeys: Record<string, boolean>;
+      };
+      expect(document.hasKeys['elevenlabs.apiKey']).toBe(true);
+      expect(JSON.stringify(document)).not.toContain('el-test-key');
+    } finally {
+      // Leave the shared database without this key for the other tests.
+      const current = (await (await request.get('/api/settings')).json()) as { version: number };
+      await request.patch('/api/settings', {
+        data: { version: current.version, changes: { 'elevenlabs.apiKey': null } },
+      });
+      expect((await (await request.get('/api/settings')).json()).hasKeys['elevenlabs.apiKey']).toBe(false);
+      expect(current.version).toBeGreaterThanOrEqual(version);
+    }
+  });
+
+  test('switching the voice provider shows its fields and updates the pipeline', async ({ page }) => {
+    await page.goto('/settings');
+    await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
+    await openSettingsSection(page, 'voice');
+    await expect(page.getByRole('button', { name: 'Listen to this voice' })).toBeVisible();
+    await page.getByLabel('Text-to-speech provider', { exact: true }).selectOption('elevenlabs');
+
+    await expect(page.locator('#setting-tts-elevenlabsVoiceId')).toBeVisible();
+    await expect(page.locator('#setting-tts-elevenlabsModel')).toBeVisible();
+    await expect(page.locator('#setting-tts-elevenlabsStability')).toBeVisible();
+    await expect(page.locator('#setting-tts-voice')).toHaveCount(0);
+    await expect(page.locator('#setting-tts-instructions')).toHaveCount(0);
+
+    // The navigator follows the unsaved draft.
+    await expect(page.getByRole('navigation', { name: 'Voice pipeline' })).toContainText('ElevenLabs');
+    // The sample list needs a key, so the picker stays free text (no network).
+    await expect(page.getByText(/Add the ElevenLabs key under Providers to list your voices/)).toBeVisible();
+    // "Listen here" previews the draft voice in the browser for both providers.
+    await expect(page.getByRole('button', { name: 'Listen to this voice' })).toBeVisible();
+    await page.getByRole('button', { name: 'Listen to this voice' }).click();
+    await expect(page.getByText(/ElevenLabs is not configured/).first()).toBeVisible();
+  });
+
+  test('shows default voice names when the key cannot list the account', async ({ page, request }) => {
+    // The e2e base URL is a closed local port, so both voice-list calls fail
+    // offline and the built-in snapshot answers with ElevenLabs' default voices.
+    const before = (await (await request.get('/api/settings')).json()) as { version: number };
+    await request.patch('/api/settings', {
+      data: { version: before.version, changes: { 'elevenlabs.apiKey': 'el-test-key' } },
+    });
+    try {
+      await page.goto('/settings');
+      await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
+      await openSettingsSection(page, 'voice');
+      await page.getByLabel('Text-to-speech provider', { exact: true }).selectOption('elevenlabs');
+
+      // The stored id is the default George voice, shown by its readable name.
+      const voice = page.locator('#setting-tts-elevenlabsVoiceId');
+      await expect(voice).toHaveValue('George - Warm, Captivating Storyteller');
+      await expect(page.getByText('JBFqnCBsd6RMkjVDRZzb', { exact: true })).toBeVisible();
+      await expect(page.getByText(/Showing ElevenLabs' default voices/)).toBeVisible();
+
+      // The list is usable offline and the chevron opens it.
+      await voice.click();
+      await expect(
+        page.getByRole('option', { name: /George - Warm, Captivating Storyteller/ }),
+      ).toBeVisible();
+
+      // A half-typed search is not a voice id: leaving the field reverts it.
+      await voice.fill('geo');
+      await voice.press('Tab');
+      await expect(voice).toHaveValue('George - Warm, Captivating Storyteller');
+
+      // Searching and pressing Enter on the only match picks it by name.
+      await voice.fill('Daniel');
+      await voice.press('Enter');
+      await expect(voice).toHaveValue('Daniel - Steady Broadcaster');
+      await expect(page.getByText('onwK4e9ZLuTAKqWW03F9', { exact: true })).toBeVisible();
+    } finally {
+      const current = (await (await request.get('/api/settings')).json()) as { version: number };
+      await request.patch('/api/settings', {
+        data: { version: current.version, changes: { 'elevenlabs.apiKey': null } },
+      });
+    }
+  });
+
+  test('starts the sample audio inside the click, for both providers', async ({ page }) => {
+    // The e2e server has no provider keys: answer the sample request ourselves
+    // with a valid 10 ms silent WAV (8 kHz, mono, 16-bit).
+    await page.route('**/api/settings/voice-sample', (route) =>
+      route.fulfill({ status: 200, contentType: 'audio/wav', body: SILENT_WAV }),
+    );
+    // Chromium keeps a late play() going; iOS Safari does not. Record for every
+    // play() whether a click was being dispatched at that moment.
+    await page.addInitScript(() => {
+      const plays: { src: string; inClick: boolean }[] = [];
+      Object.assign(window, { __plays: plays });
+      let inClick = false;
+      window.addEventListener(
+        'click',
+        () => {
+          inClick = true;
+          setTimeout(() => {
+            inClick = false;
+          }, 0);
+        },
+        true,
+      );
+      const play = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+        plays.push({ src: this.src, inClick });
+        return play.call(this);
+      };
+    });
+    const readPlays = () =>
+      page.evaluate(() => (window as unknown as { __plays: { src: string; inClick: boolean }[] }).__plays);
+
+    await page.goto('/settings');
+    await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
+    await openSettingsSection(page, 'voice');
+    const provider = page.getByLabel('Text-to-speech provider', { exact: true });
+
+    for (const value of ['openai', 'elevenlabs']) {
+      await provider.selectOption(value);
+      await page.getByRole('button', { name: 'Listen to this voice' }).click();
+      await expect.poll(async () => (await readPlays()).length).toBeGreaterThanOrEqual(2);
+      const [first, second] = await readPlays();
+      // The unlock happened synchronously in the click, on the element the
+      // sample then reuses; the real sample itself plays after the fetch.
+      expect(first?.inClick).toBe(true);
+      expect(first?.src.startsWith('data:audio/wav')).toBe(true);
+      expect(second?.inClick).toBe(false);
+      expect(second?.src.startsWith('blob:')).toBe(true);
+
+      // The 10 ms clip is over: back to Listen before the next provider.
+      await expect(page.getByRole('button', { name: 'Listen to this voice' })).toBeVisible();
+      await page.evaluate(() => {
+        (window as unknown as { __plays: unknown[] }).__plays.length = 0;
+      });
+    }
+  });
+
+  test('the pipeline navigator scrolls to a stage', async ({ page }) => {
+    await page.goto('/settings');
+    await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
+    const pipeline = page.getByRole('navigation', { name: 'Voice pipeline' });
+    await expect(pipeline.getByRole('link', { name: /Understanding: gpt-transcribe/ })).toBeVisible();
+    await expect(pipeline.getByRole('button', { name: 'Open Providers: OpenAI' }).first()).toBeVisible();
+
+    await pipeline.getByRole('link', { name: /Understanding: .*Go to the Understanding settings/ }).click();
+    await expect(page.locator('#section-understanding')).toBeInViewport();
+    // Desktop renders a heading; a phone renders a <details> whose summary takes focus.
+    await expect(page.locator('#section-understanding h2, #section-understanding > summary')).toBeFocused();
+    await expect(page).toHaveURL(/#section-understanding$/);
+
+    // The provider badge switches to the Providers tab.
+    await pipeline.getByRole('button', { name: 'Open Providers: OpenAI' }).first().click();
+    await expect(page).toHaveURL(/tab=providers/);
+    await expect(page.getByTestId('provider-openai')).toBeVisible();
+  });
+
+  test('never scrolls the page horizontally', async ({ page }) => {
+    await page.goto('/settings');
+    await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+    ).toBeLessThanOrEqual(1);
+
+    await page.goto('/settings?tab=providers');
+    await expect(page.getByTestId('provider-elevenlabs')).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+    ).toBeLessThanOrEqual(1);
+  });
+
   test('plays a test phrase without saving', async ({ page, request }) => {
     const device = await createDevice(request, {
       name: 'Phrase Echo',
@@ -149,7 +345,7 @@ test.describe('Settings page', () => {
       await openSettingsSection(page, 'voice');
       const before = await settingsVersion(page);
 
-      await page.getByRole('button', { name: 'Play', exact: true }).click();
+      await page.getByRole('button', { name: 'Play on an Echo', exact: true }).click();
       const results = page.getByRole('list', { name: 'Test phrase results' });
       await expect(results.getByText(/Phrase Echo/)).toBeVisible({ timeout: 15_000 });
       await expect(results.getByText(/OpenAI is not configured/)).toBeVisible();

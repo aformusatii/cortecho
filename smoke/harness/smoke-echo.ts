@@ -1,11 +1,11 @@
-import type { DeviceStatus, Turn } from '@cortecho/shared';
+import type { DeviceStatus, Turn, VoiceSampleRequest } from '@cortecho/shared';
 import { FakeEcho } from '../../apps/api/src/esphome/fake-echo.ts';
 import { parseApiKey } from '../../apps/api/src/esphome/noise.ts';
 import { pcmToWav } from '../../apps/api/src/pipeline/audio.ts';
 import { type Cleanup, createCleanup } from './cleanup.ts';
 import { CortechoApi } from './cortecho-api.ts';
 import { loadEnv, type SmokeEnv } from './env.ts';
-import { newRunId, Report } from './report.ts';
+import { newRunId, Report, toolCallLine } from './report.ts';
 import { ServerLog } from './server-log.ts';
 import { OwnerVoice, type WakeInput, withRealWavLengths } from './voice.ts';
 
@@ -308,6 +308,23 @@ export class SmokeEcho {
     await this.api.say(text, all ? { all: true } : { deviceId: this.deviceId ?? undefined });
   }
 
+  /** POST /api/say, returning the WAV the Echo downloaded (null when none arrived). */
+  async announceAndCapture(text: string): Promise<Buffer | null> {
+    this.lastReplyWav = null;
+    await this.announce(text);
+    return this.lastReplyWav;
+  }
+
+  /** Whether the deployment has one provider's key stored (the skip guard). */
+  async hasKey(key: 'openai.apiKey' | 'elevenlabs.apiKey'): Promise<boolean> {
+    return (await this.api.settings()).hasKeys[key] === true;
+  }
+
+  /** The draft voice's sample from POST /api/settings/voice-sample (no Echo, no turn). */
+  voiceSample(input: VoiceSampleRequest): Promise<Buffer> {
+    return this.api.voiceSample(input);
+  }
+
   /** Waits, for idle-time behaviour. */
   idle(ms: number): Promise<void> {
     return sleep(ms);
@@ -420,6 +437,9 @@ export class SmokeEcho {
     this.report.line(`- Echo said: ${observation.said ? `"${observation.said}"` : '(no reply audio)'}`);
     if (turn?.reply && turn.reply !== observation.said) this.report.line(`- reply text: "${turn.reply}"`);
     if (transcribeError) this.report.line(`- transcription failed: ${transcribeError}`);
+    if (turn?.toolCalls.length) {
+      this.report.line(`- tools: ${turn.toolCalls.map(toolCallLine).join(', ')}`);
+    }
     this.report.line(
       `- outcome: ${turn?.outcome ?? '?'}, listens again: ${observation.listensAgain}, ` +
         `wire: ${observation.wire.join(' ')}`,

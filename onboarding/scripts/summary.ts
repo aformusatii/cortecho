@@ -62,6 +62,7 @@ type Facts = {
     image?: string;
     commit?: string;
     openaiMode?: string;
+    elevenlabsMode?: string;
     number?: string | number;
     totalSteps?: number;
     startedAt?: string;
@@ -70,7 +71,15 @@ type Facts = {
   echo?: EchoFacts;
 };
 
-type Call = { at: string; method: string; path: string; status: number; ms: number; model?: string };
+type Call = {
+  at: string;
+  service?: 'openai' | 'elevenlabs';
+  method: string;
+  path: string;
+  status: number;
+  ms: number;
+  model?: string;
+};
 
 type TestResult = { status?: string; duration?: number };
 type TestCase = { title?: string; results?: TestResult[]; ok?: boolean };
@@ -126,6 +135,7 @@ lines.push('|---|---|');
 lines.push(`| Image | \`${facts.run?.image ?? 'unknown'}\` |`);
 lines.push(`| Commit | \`${facts.run?.commit ?? 'unknown'}\` |`);
 lines.push(`| OpenAI | ${facts.run?.openaiMode ?? 'unknown'} |`);
+lines.push(`| ElevenLabs | ${facts.run?.elevenlabsMode ?? 'unknown'} |`);
 lines.push(`| Steps | ${passed}/${totalSteps} passed |`);
 lines.push(`| Total time | ${formatDuration(totalMs)} |`);
 lines.push(`| Started | ${facts.run?.startedAt ?? 'unknown'} |`);
@@ -217,16 +227,16 @@ if (reconnects.length > 0) {
 }
 lines.push('');
 
-lines.push('## OpenAI calls');
+lines.push('## AI calls');
 lines.push('');
 if (calls.length === 0) {
   lines.push('No calls recorded.');
 } else {
-  lines.push('| Method | Path | Status | Time | Model |');
-  lines.push('|--------|------|--------|------|-------|');
+  lines.push('| Service | Method | Path | Status | Time | Model |');
+  lines.push('|---------|--------|------|--------|------|-------|');
   for (const call of calls) {
     lines.push(
-      `| ${call.method} | \`${call.path}\` | ${call.status} | ${formatSeconds(call.ms)} | ${call.model ?? '–'} |`,
+      `| ${call.service ?? 'openai'} | ${call.method} | \`${call.path}\` | ${call.status} | ${formatSeconds(call.ms)} | ${call.model ?? '–'} |`,
     );
   }
 }
@@ -247,6 +257,8 @@ lines.push('');
 const markdown = `${lines.join('\n')}\n`;
 mkdirSync(outDir, { recursive: true });
 writeFileSync(path.join(outDir, 'summary.md'), markdown);
+// CI and the owner rely on the exit code: a failed run must not look green.
+process.exitCode = ok ? 0 : 1;
 process.stdout.write(markdown);
 
 function option(name: string): string | undefined {

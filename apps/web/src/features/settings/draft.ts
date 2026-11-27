@@ -1,4 +1,9 @@
-import { DEFAULT_SETTINGS, SETTING_DESCRIPTORS, type SettingDescriptor } from '@cortecho/shared';
+import {
+  DEFAULT_SETTINGS,
+  SETTING_DESCRIPTORS,
+  type SettingDescriptor,
+  type VoicePreview,
+} from '@cortecho/shared';
 
 // The settings forms are generated from the descriptors. These helpers are the
 // only place that decides what "changed", "default", a field id and a display
@@ -89,6 +94,40 @@ export function formatBounds(descriptor: SettingDescriptor): string {
       ? `${formatMilliseconds(min)} – ${formatMilliseconds(max)}`
       : `${min} – ${max}`;
   return unit ? `${body} ${unit === 'ms' && control === 'slider' ? '' : unit}`.trim() : body;
+}
+
+/**
+ * Whether a conditional field is shown. The value comes from the same draft
+ * (which holds every resolved key on the global page), so switching provider
+ * shows its fields without clearing the others.
+ */
+export function isFieldVisible(descriptor: SettingDescriptor, values: FormValues): boolean {
+  if (!descriptor.showWhen) return true;
+  const value = values[descriptor.showWhen.key] ?? DEFAULT_SETTINGS[descriptor.showWhen.key];
+  return value === descriptor.showWhen.equals;
+}
+
+/** The unsaved voice values of a form, for "play a test phrase" (POST /api/say). */
+export function voicePreviewFrom(values: FormValues): VoicePreview {
+  const string = (key: string): string | undefined => {
+    const value = values[key];
+    return typeof value === 'string' && value !== '' ? value : undefined;
+  };
+  const provider = values['tts.provider'];
+  return {
+    ...(provider === 'openai' || provider === 'elevenlabs' ? { provider } : {}),
+    voice: string('tts.voice'),
+    model: string('tts.model'),
+    speed: typeof values['tts.speed'] === 'number' ? (values['tts.speed'] as number) : undefined,
+    instructions:
+      typeof values['tts.instructions'] === 'string' ? (values['tts.instructions'] as string) : undefined,
+    elevenlabsVoiceId: string('tts.elevenlabsVoiceId'),
+    elevenlabsModel: string('tts.elevenlabsModel'),
+    elevenlabsStability:
+      typeof values['tts.elevenlabsStability'] === 'number'
+        ? (values['tts.elevenlabsStability'] as number)
+        : undefined,
+  };
 }
 
 /** All descriptors of one section, in registry order. */

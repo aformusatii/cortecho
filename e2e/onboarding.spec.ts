@@ -40,7 +40,7 @@ test.describe('Onboarding', () => {
     if (!setup.homeConfirmed) {
       await expect(page.getByRole('heading', { name: 'Your home' })).toBeVisible();
       await expect(page.getByText('Step 2 of 4')).toBeVisible();
-      await page.getByLabel('Time zone', { exact: true }).fill('Europe/Chisinau');
+      await page.getByLabel('Time zone', { exact: true }).fill('Europe/Berlin');
       await page.getByLabel('Locale', { exact: true }).selectOption('en-GB');
       await page.getByRole('button', { name: 'Next' }).click();
       await expect.poll(async () => (await readSetup(request)).homeConfirmed).toBe(true);

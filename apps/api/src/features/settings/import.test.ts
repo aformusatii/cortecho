@@ -75,6 +75,27 @@ describe('importing SystemPrompt.md', () => {
     ).not.toThrow();
   });
 
+  it('reads SYSTEM_PROMPT_FILE when no explicit path is given', () => {
+    const storage = store();
+    const result = importSettingsFromEnvironment(storage, {
+      env: { SYSTEM_PROMPT_FILE: promptFile(HOUSEHOLD) },
+    });
+    expect(result?.imported).toContain('assistant.householdPrompt');
+    expect(storage.storedValues()['assistant.householdPrompt']).toBe(HOUSEHOLD);
+  });
+
+  it('imports no prompt when SYSTEM_PROMPT_FILE is empty', () => {
+    for (const value of ['', '   ']) {
+      const storage = store();
+      const result = importSettingsFromEnvironment(storage, { env: { SYSTEM_PROMPT_FILE: value } });
+      expect(result).toBeNull();
+      expect(storage.version).toBe(0);
+      expect(storage.current().settings.assistant.householdPrompt).toBe(
+        DEFAULT_SETTINGS['assistant.householdPrompt'],
+      );
+    }
+  });
+
   it('keeps a custom instruction line that is not one of the built-in rules', () => {
     const { text, dropped } = extractHouseholdPrompt(`Be concise and dry.\n\n${HOUSEHOLD}`);
     expect(text).toBe(`Be concise and dry.\n\n${HOUSEHOLD}`);

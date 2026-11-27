@@ -176,7 +176,7 @@ function buildHtml(
     ${echoBullets()}
   </ul>
 
-  <h2>OpenAI calls</h2>
+  <h2>AI calls</h2>
   ${callsTable(calls)}
 
   ${
@@ -244,7 +244,7 @@ function echoBullets(): string {
 
 function callsTable(items: Call[]): string {
   const filtered = items.filter((call) => call.path.startsWith('/v1/'));
-  if (filtered.length === 0) return '<p class="note">No OpenAI calls recorded.</p>';
+  if (filtered.length === 0) return '<p class="note">No AI calls recorded.</p>';
   return `<table>
     <thead><tr><th>Method</th><th>Path</th><th>Status</th><th>Time</th><th>Model</th></tr></thead>
     <tbody>${filtered

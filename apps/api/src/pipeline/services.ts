@@ -1,15 +1,21 @@
-import type { Settings } from '@cortecho/shared';
+import { providerLabel, type Settings, type VoiceProvider } from '@cortecho/shared';
+import type { CreateResponse } from './agent.ts';
 import type { AgentSession } from './agent-sessions.ts';
 import type { PromptDevice } from './prompt-layers.ts';
 
 /**
- * The three AI steps of a turn, as interfaces. The OpenAI implementations
- * live in openai.ts; tests pass fakes, so the pipeline and the fake-Echo
- * tests run without network access or an API key.
+ * The three AI steps of a turn, as interfaces. The OpenAI and ElevenLabs
+ * implementations live in providers/; tests pass fakes, so the pipeline and the
+ * fake-Echo tests run without network access or an API key.
  *
  * Every call takes the turn's settings snapshot: the models, the voice and
  * the timeouts are settings now, and a turn uses the values it started with.
+ * The two audio stages dispatch on that snapshot, per call, so two Echos (or
+ * two turns) can use different providers.
  */
+
+/** Both providers stream raw 24 kHz, 16-bit signed LE, mono PCM. */
+export const PCM_SAMPLE_RATE = 24_000;
 
 export type SpeechToText = {
   /** Returns the recognised text ('' when nothing usable was said). */
@@ -64,22 +70,54 @@ export type TextToSpeech = {
   synthesize(text: string, signal: AbortSignal, settings: Settings): AsyncIterable<Buffer>;
 };
 
+/** One provider's audio stages, as the dispatcher uses them. */
+export type ProviderVoice = {
+  transcribe: SpeechToText['transcribe'];
+  readonly sampleRate: number;
+  synthesize: TextToSpeech['synthesize'];
+  configured(settings: Settings): boolean;
+  warmUp(settings: Settings): void;
+};
+
+/** OpenAI also does thinking (the streamed Responses call). */
+export type OpenAiVoice = ProviderVoice & { createResponse: CreateResponse };
+
+export type ElevenLabsVoiceProvider = ProviderVoice;
+
 export type VoiceServices = {
   stt: SpeechToText;
   agent: Agent;
   tts: TextToSpeech;
-  /** False when no OpenAI key is set; the pipeline then fails turns fast. */
-  readonly configured: boolean;
   /**
-   * Opens the connection to the AI service ahead of the first request of a
+   * True when a snapshot has the keys its stages need (OpenAI for thinking, or
+   * a selected audio provider). Takes the snapshot, never the global settings:
+   * an Echo may select a provider the global configuration does not use.
+   */
+  isConfigured(settings: Settings): boolean;
+  /**
+   * Opens the connection to the AI services ahead of the first request of a
    * turn (called at the wake word). Never throws.
    */
-  warmUp?: () => void;
+  warmUp?: (settings: Settings) => void;
 };
 
 export class NotConfiguredError extends Error {
-  constructor() {
-    super('OPENAI_API_KEY is not set');
+  readonly provider: VoiceProvider;
+  constructor(provider: VoiceProvider) {
+    super(`${providerLabel(provider)} is not configured (no API key in Settings → Providers).`);
     this.name = 'NotConfiguredError';
+    this.provider = provider;
   }
+}
+
+/** The providers whose keys are missing for this snapshot, in a stable order. */
+export function missingProviders(settings: Settings): VoiceProvider[] {
+  const missing = new Set<VoiceProvider>();
+  // Thinking is always OpenAI, so its key is always needed.
+  if (!settings.openai.apiKey) missing.add('openai');
+  if (!settings.elevenlabs.apiKey) {
+    if (settings.stt.provider === 'elevenlabs') missing.add('elevenlabs');
+    if (settings.tts.provider === 'elevenlabs') missing.add('elevenlabs');
+  }
+  return (['openai', 'elevenlabs'] as const).filter((provider) => missing.has(provider));
 }

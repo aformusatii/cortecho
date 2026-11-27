@@ -75,15 +75,69 @@ describe('settings registry', () => {
     }
   });
 
-  it('marks the OpenAI key as the secret', () => {
-    expect(SECRET_SETTING_KEYS).toEqual(['openai.apiKey']);
+  it('marks the provider keys as secrets', () => {
+    expect(SECRET_SETTING_KEYS).toEqual(['openai.apiKey', 'elevenlabs.apiKey']);
     expect(SETTING_BY_KEY.get('openai.apiKey')?.secret).toBe(true);
+    expect(SETTING_BY_KEY.get('elevenlabs.apiKey')?.secret).toBe(true);
+    // The ElevenLabs key is new: it has no environment import.
+    expect(SETTING_BY_KEY.get('elevenlabs.apiKey')?.env).toBeUndefined();
   });
 
-  it('allows per-Echo overrides only for room-dependent knobs', () => {
+  it('points every conditional field at a select option', () => {
+    const conditional = SETTING_DESCRIPTORS.filter((descriptor) => descriptor.showWhen !== undefined);
+    expect(conditional.map((descriptor) => descriptor.key)).toEqual(
+      expect.arrayContaining([
+        'stt.model',
+        'stt.elevenlabsModel',
+        'tts.model',
+        'tts.voice',
+        'tts.elevenlabsVoiceId',
+      ]),
+    );
+    for (const descriptor of conditional) {
+      const showWhen = descriptor.showWhen;
+      if (!showWhen) throw new Error(`${descriptor.key}: missing showWhen`);
+      const target = SETTING_BY_KEY.get(showWhen.key);
+      expect(target, `${descriptor.key}: ${showWhen.key} exists`).toBeDefined();
+      expect(target?.control, `${descriptor.key}: ${showWhen.key} is a select`).toBe('select');
+      expect(target?.options, `${descriptor.key}: ${showWhen.key} offers ${showWhen.equals}`).toContain(
+        showWhen.equals,
+      );
+    }
+  });
+
+  it('labels select options with values that exist', () => {
+    const labelled = SETTING_DESCRIPTORS.filter((descriptor) => descriptor.optionLabels !== undefined);
+    expect(labelled.map((descriptor) => descriptor.key)).toEqual(
+      expect.arrayContaining(['stt.provider', 'tts.provider']),
+    );
+    for (const descriptor of labelled) {
+      expect(descriptor.control).toBe('select');
+      for (const value of Object.keys(descriptor.optionLabels ?? {})) {
+        expect(descriptor.options, `${descriptor.key}: ${value}`).toContain(value);
+      }
+    }
+  });
+
+  it('defaults both audio stages to OpenAI and keeps thinking there', () => {
+    expect(DEFAULT_SETTINGS['stt.provider']).toBe('openai');
+    expect(DEFAULT_SETTINGS['tts.provider']).toBe('openai');
+    expect(SETTING_BY_KEY.get('agent.model')?.section).toBe('thinking');
+  });
+
+  it('allows per-Echo overrides for the audio of a turn, never for keys or thinking', () => {
     const perEcho = SETTING_DESCRIPTORS.filter((descriptor) => descriptor.perEcho).map((d) => d.key);
     expect(perEcho).toEqual(
       expect.arrayContaining([
+        // Each Echo can use its own providers and models for both audio stages.
+        'stt.provider',
+        'stt.model',
+        'stt.elevenlabsModel',
+        'tts.provider',
+        'tts.model',
+        'tts.elevenlabsModel',
+        'tts.elevenlabsStability',
+        // The rest of the per-turn audio.
         'tts.voice',
         'tts.speed',
         'stt.languages',
@@ -94,6 +148,9 @@ describe('settings registry', () => {
     );
     expect(perEcho).not.toContain('agent.model');
     expect(perEcho).not.toContain('openai.apiKey');
+    expect(perEcho).not.toContain('elevenlabs.apiKey');
+    expect(perEcho).not.toContain('openai.timeoutMs');
+    expect(perEcho).not.toContain('elevenlabs.timeoutMs');
     expect(perEcho).not.toContain('network.replyBaseUrl');
   });
 });

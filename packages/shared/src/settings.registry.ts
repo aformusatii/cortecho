@@ -19,6 +19,7 @@ export const SETTING_SECTIONS = [
   'listening',
   'timing',
   'network',
+  'providers',
   'advanced',
 ] as const;
 export type SectionId = (typeof SETTING_SECTIONS)[number];
@@ -32,8 +33,26 @@ export const SETTINGS_SECTION_LABELS: Record<SectionId, string> = {
   listening: 'Listening',
   timing: 'Timing',
   network: 'Network',
+  providers: 'Providers',
   advanced: 'Advanced',
 };
+
+/** The two audio stages can each use either provider; thinking stays OpenAI. */
+export const VOICE_PROVIDERS = ['openai', 'elevenlabs'] as const;
+export type VoiceProvider = (typeof VOICE_PROVIDERS)[number];
+
+export const ELEVENLABS_TTS_MODELS = [
+  'eleven_flash_v2_5',
+  'eleven_turbo_v2_5',
+  'eleven_multilingual_v2',
+  'eleven_v4',
+  'eleven_v4_turbo',
+] as const;
+
+export const ELEVENLABS_STT_MODELS = ['scribe_v3', 'scribe_v2'] as const;
+
+/** Premade "George": available on every ElevenLabs account. */
+export const DEFAULT_ELEVENLABS_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
 
 export type SettingControl =
   | 'text'
@@ -66,7 +85,14 @@ export type SettingDescriptor = {
   maxLength?: number;
   /** select: the allowed values; combobox: suggestions. */
   options?: readonly string[];
-  suggestFrom?: 'openai-models';
+  /** select: display labels for option values (e.g. openai → OpenAI). */
+  optionLabels?: Record<string, string>;
+  suggestFrom?: 'openai-models' | 'elevenlabs-models' | 'elevenlabs-voices';
+  /**
+   * Rendered only while another setting has this value (the selected provider).
+   * The value is kept, not cleared, when the field is hidden.
+   */
+  showWhen?: { key: string; equals: string };
   /** May be overridden per Echo (devices.overrides). */
   perEcho: boolean;
   /** Write-only: the API returns hasKey, never the value. */
@@ -226,23 +252,50 @@ const settings: readonly SettingDescriptor[] = [
   },
   // --- Understanding --------------------------------------------------------
   {
+    key: 'stt.provider',
+    section: 'understanding',
+    label: 'Speech-to-text provider',
+    help: 'Which service turns this Echo’s recorded requests into text. Thinking always uses OpenAI.',
+    schema: z.enum(VOICE_PROVIDERS),
+    default: 'openai',
+    control: 'select',
+    options: VOICE_PROVIDERS,
+    optionLabels: { openai: 'OpenAI', elevenlabs: 'ElevenLabs' },
+    perEcho: true,
+    applies: 'next-turn',
+  },
+  {
     key: 'stt.model',
     section: 'understanding',
     label: 'Speech-to-text model',
-    help: 'The OpenAI model that turns the recorded request into text.',
+    help: 'The OpenAI model that turns this Echo’s recorded requests into text.',
     schema: z.string().min(1).max(100),
     default: 'gpt-transcribe',
     control: 'combobox',
     suggestFrom: 'openai-models',
-    perEcho: false,
+    perEcho: true,
     applies: 'next-turn',
+    showWhen: { key: 'stt.provider', equals: 'openai' },
     env: 'STT_MODEL',
+  },
+  {
+    key: 'stt.elevenlabsModel',
+    section: 'understanding',
+    label: 'ElevenLabs transcription model',
+    help: 'Scribe v3 is the newest and most accurate; Scribe v2 is still available.',
+    schema: z.string().min(1).max(100),
+    default: 'scribe_v3',
+    control: 'combobox',
+    options: ELEVENLABS_STT_MODELS,
+    perEcho: true,
+    applies: 'next-turn',
+    showWhen: { key: 'stt.provider', equals: 'elevenlabs' },
   },
   {
     key: 'stt.languages',
     section: 'understanding',
     label: 'Languages',
-    help: 'ISO-639-1 hints for recognition (e.g. en, ro). Empty = detect automatically.',
+    help: 'ISO-639-1 hints for recognition (e.g. en, ro). Empty = detect automatically. OpenAI takes them all; ElevenLabs uses the first and, on Scribe v3, the rest as secondary languages.',
     schema: z.array(z.string().regex(/^[a-z]{2}$/)).max(10),
     default: [],
     control: 'tags',
@@ -254,13 +307,14 @@ const settings: readonly SettingDescriptor[] = [
     key: 'stt.prompt',
     section: 'understanding',
     label: 'Recognition hints',
-    help: 'Names, places and jargon the transcriber should expect.',
+    help: 'Names, places and jargon the OpenAI transcriber should expect.',
     schema: z.string().max(1000),
     maxLength: 1000,
     default: '',
     control: 'textarea',
     perEcho: true,
     applies: 'next-turn',
+    showWhen: { key: 'stt.provider', equals: 'openai' },
     env: 'STT_PROMPT',
   },
   {
@@ -421,36 +475,93 @@ const settings: readonly SettingDescriptor[] = [
   },
   // --- Voice ----------------------------------------------------------------
   {
+    key: 'tts.provider',
+    section: 'voice',
+    label: 'Text-to-speech provider',
+    help: 'Which service speaks this Echo’s answers. The voice, model and sample rate below follow this choice.',
+    schema: z.enum(VOICE_PROVIDERS),
+    default: 'openai',
+    control: 'select',
+    options: VOICE_PROVIDERS,
+    optionLabels: { openai: 'OpenAI', elevenlabs: 'ElevenLabs' },
+    perEcho: true,
+    applies: 'next-turn',
+  },
+  {
     key: 'tts.model',
     section: 'voice',
     label: 'Text-to-speech model',
-    help: 'The OpenAI model that speaks the answer.',
+    help: 'The OpenAI model that speaks this Echo’s answers.',
     schema: z.string().min(1).max(100),
     default: 'gpt-4o-mini-tts',
     control: 'combobox',
     suggestFrom: 'openai-models',
-    perEcho: false,
+    perEcho: true,
     applies: 'next-turn',
+    showWhen: { key: 'tts.provider', equals: 'openai' },
     env: 'TTS_MODEL',
   },
   {
     key: 'tts.voice',
     section: 'voice',
     label: 'Voice',
-    help: 'The voice every Echo uses unless it has its own.',
+    help: 'The OpenAI voice every Echo uses unless it has its own.',
     schema: z.string().min(1).max(50),
     default: 'marin',
     control: 'combobox',
     options: ttsVoices,
     perEcho: true,
     applies: 'next-turn',
+    showWhen: { key: 'tts.provider', equals: 'openai' },
     env: 'TTS_VOICE',
+  },
+  {
+    key: 'tts.elevenlabsModel',
+    section: 'voice',
+    label: 'ElevenLabs model',
+    help: 'Eleven Flash v2.5 has the lowest latency. v4 models ignore speed and use stability instead.',
+    schema: z.string().min(1).max(100),
+    default: 'eleven_flash_v2_5',
+    control: 'combobox',
+    options: ELEVENLABS_TTS_MODELS,
+    suggestFrom: 'elevenlabs-models',
+    perEcho: true,
+    applies: 'next-turn',
+    showWhen: { key: 'tts.provider', equals: 'elevenlabs' },
+  },
+  {
+    key: 'tts.elevenlabsVoiceId',
+    section: 'voice',
+    label: 'ElevenLabs voice',
+    help: 'Pick an ElevenLabs voice by name, or paste a voice id.',
+    schema: z.string().min(1).max(100),
+    default: DEFAULT_ELEVENLABS_VOICE_ID,
+    control: 'combobox',
+    suggestFrom: 'elevenlabs-voices',
+    perEcho: true,
+    applies: 'next-turn',
+    showWhen: { key: 'tts.provider', equals: 'elevenlabs' },
+  },
+  {
+    key: 'tts.elevenlabsStability',
+    section: 'voice',
+    label: 'ElevenLabs stability',
+    help: 'Lower is more expressive, higher is steadier.',
+    schema: z.number().min(0).max(1),
+    min: 0,
+    max: 1,
+    step: 0.05,
+    default: 0.5,
+    control: 'slider',
+    perEcho: true,
+    applies: 'next-turn',
+    showWhen: { key: 'tts.provider', equals: 'elevenlabs' },
   },
   {
     key: 'tts.speed',
     section: 'voice',
     label: 'Speed',
-    help: 'Speaking rate. Below 1 is slower, above 1 faster.',
+    help: 'Speaking rate. Below 1 is slower, above 1 faster. ElevenLabs accepts 0.7 to 1.2; other values are clamped for it.',
     schema: z.number().min(0.5).max(2),
     min: 0.5,
     max: 2,
@@ -466,20 +577,21 @@ const settings: readonly SettingDescriptor[] = [
     key: 'tts.instructions',
     section: 'voice',
     label: 'Voice instructions',
-    help: 'How the voice should sound (tone, pace, warmth). Not supported by the older tts-1 models.',
+    help: 'How the OpenAI voice should sound (tone, pace, warmth). Not supported by the older tts-1 models; ElevenLabs has no equivalent.',
     schema: z.string().max(1000),
     maxLength: 1000,
     default: 'Speak clearly, warmly and at a natural pace.',
     control: 'textarea',
     perEcho: true,
     applies: 'next-turn',
+    showWhen: { key: 'tts.provider', equals: 'openai' },
     env: 'TTS_INSTRUCTIONS',
   },
   {
     key: 'tts.outputRate',
     section: 'voice',
     label: 'Output sample rate',
-    help: 'Resample the reply audio. 0 = leave OpenAI’s 24 kHz unchanged; hassmic resamples anyway.',
+    help: 'Resample the reply audio. 0 = leave the provider’s 24 kHz unchanged; hassmic resamples anyway.',
     schema: z.number().int().min(0).max(48000),
     default: 0,
     control: 'select',
@@ -690,12 +802,25 @@ const settings: readonly SettingDescriptor[] = [
     applies: 'next-turn',
     env: 'REPLY_AUDIO_BASE_URL',
   },
-  // --- Advanced -------------------------------------------------------------
+  // --- Providers ------------------------------------------------------------
+  {
+    key: 'openai.apiKey',
+    section: 'providers',
+    label: 'OpenAI API key',
+    help: 'The account key. Thinking always needs it; it also covers understanding and the voice when they are set to OpenAI. It is never shown again after saving; enter a new one to replace it.',
+    schema: z.string().min(1).max(200).nullable(),
+    default: null,
+    control: 'text',
+    perEcho: false,
+    secret: true,
+    applies: 'next-turn',
+    env: 'OPENAI_API_KEY',
+  },
   {
     key: 'openai.timeoutMs',
-    section: 'advanced',
+    section: 'providers',
     label: 'OpenAI timeout',
-    help: 'Per-request timeout for OpenAI calls.',
+    help: 'Per-request timeout for OpenAI calls (understanding, thinking and the OpenAI voice).',
     schema: z.number().int().min(1000).max(120000),
     min: 1000,
     max: 120000,
@@ -705,23 +830,36 @@ const settings: readonly SettingDescriptor[] = [
     unit: 'ms',
     perEcho: false,
     applies: 'next-turn',
-    advanced: true,
     env: 'OPENAI_TIMEOUT_MS',
   },
   {
-    key: 'openai.apiKey',
-    section: 'advanced',
-    label: 'OpenAI API key',
-    help: 'The account key. It is never shown again after saving; enter a new one to replace it.',
+    key: 'elevenlabs.apiKey',
+    section: 'providers',
+    label: 'ElevenLabs API key',
+    help: 'The account key. It is never sent anywhere except to ElevenLabs and is never shown again after saving; enter a new one to replace it.',
     schema: z.string().min(1).max(200).nullable(),
     default: null,
     control: 'text',
     perEcho: false,
     secret: true,
     applies: 'next-turn',
-    advanced: true,
-    env: 'OPENAI_API_KEY',
   },
+  {
+    key: 'elevenlabs.timeoutMs',
+    section: 'providers',
+    label: 'ElevenLabs timeout',
+    help: 'Per-request timeout for ElevenLabs calls (understanding and the voice).',
+    schema: z.number().int().min(1000).max(120000),
+    min: 1000,
+    max: 120000,
+    step: 1000,
+    default: 20000,
+    control: 'number',
+    unit: 'ms',
+    perEcho: false,
+    applies: 'next-turn',
+  },
+  // --- Advanced -------------------------------------------------------------
   {
     key: 'echo.duplicateWakeWindowMs',
     section: 'advanced',
@@ -862,7 +1000,9 @@ export type Settings = {
     apologyText: string;
   };
   stt: {
+    provider: VoiceProvider;
     model: string;
+    elevenlabsModel: string;
     languages: string[];
     prompt: string;
     eagerSilenceMs: number;
@@ -878,7 +1018,17 @@ export type Settings = {
     maxToolRounds: number;
   };
   connectors: { enabled: boolean; disabled: string[]; confirmWindowS: number };
-  tts: { model: string; voice: string; speed: number; instructions: string; outputRate: number };
+  tts: {
+    provider: VoiceProvider;
+    model: string;
+    voice: string;
+    elevenlabsModel: string;
+    elevenlabsVoiceId: string;
+    elevenlabsStability: number;
+    speed: number;
+    instructions: string;
+    outputRate: number;
+  };
   followUp: { mode: FollowUpMode; questionMarkFallback: boolean; minWaitMs: number; maxWaitMs: number };
   vad: {
     minSpeechDb: number;
@@ -892,6 +1042,7 @@ export type Settings = {
   pipeline: { turnDeadlineMs: number };
   network: { replyBaseUrl: string };
   openai: { timeoutMs: number; apiKey: string | null };
+  elevenlabs: { timeoutMs: number; apiKey: string | null };
   echo: {
     duplicateWakeWindowMs: number;
     reconnectMinMs: number;
@@ -914,7 +1065,9 @@ export function buildSettings(values: Readonly<Record<string, unknown>>): Settin
       apologyText: get('assistant.apologyText'),
     },
     stt: {
+      provider: get('stt.provider'),
       model: get('stt.model'),
+      elevenlabsModel: get('stt.elevenlabsModel'),
       languages: get('stt.languages'),
       prompt: get('stt.prompt'),
       eagerSilenceMs: get('stt.eagerSilenceMs'),
@@ -934,8 +1087,12 @@ export function buildSettings(values: Readonly<Record<string, unknown>>): Settin
       confirmWindowS: get('connectors.confirmWindowS'),
     },
     tts: {
+      provider: get('tts.provider'),
       model: get('tts.model'),
       voice: get('tts.voice'),
+      elevenlabsModel: get('tts.elevenlabsModel'),
+      elevenlabsVoiceId: get('tts.elevenlabsVoiceId'),
+      elevenlabsStability: get('tts.elevenlabsStability'),
       speed: get('tts.speed'),
       instructions: get('tts.instructions'),
       outputRate: get('tts.outputRate'),
@@ -958,6 +1115,7 @@ export function buildSettings(values: Readonly<Record<string, unknown>>): Settin
     pipeline: { turnDeadlineMs: get('pipeline.turnDeadlineMs') },
     network: { replyBaseUrl: get('network.replyBaseUrl') },
     openai: { timeoutMs: get('openai.timeoutMs'), apiKey: get('openai.apiKey') },
+    elevenlabs: { timeoutMs: get('elevenlabs.timeoutMs'), apiKey: get('elevenlabs.apiKey') },
     echo: {
       duplicateWakeWindowMs: get('echo.duplicateWakeWindowMs'),
       reconnectMinMs: get('echo.reconnectMinMs'),

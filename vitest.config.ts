@@ -7,6 +7,14 @@ export default defineConfig({
     projects: [
       { test: { name: 'shared', root: './packages/shared', include: ['src/**/*.test.ts'] } },
       { test: { name: 'api', root: './apps/api', include: ['src/**/*.test.ts'], environment: 'node' } },
+      {
+        test: {
+          name: 'onboarding',
+          root: './onboarding',
+          include: ['runner/**/*.test.ts'],
+          environment: 'node',
+        },
+      },
     ],
   },
 });

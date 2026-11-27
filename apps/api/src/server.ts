@@ -27,8 +27,9 @@ import { createMcpRepository } from './mcp/mcp.repository.ts';
 import { McpManager } from './mcp/mcp-manager.ts';
 import { McpToolSource } from './mcp/mcp-tool-source.ts';
 import { AgentSessions } from './pipeline/agent-sessions.ts';
-import { createOpenAiServices } from './pipeline/openai.ts';
 import { ReplyAudioStore } from './pipeline/reply-audio.ts';
+import { missingProviders } from './pipeline/services.ts';
+import { createVoiceServices } from './pipeline/voice-services.ts';
 import { buildToolRegistry } from './tools/index.ts';
 
 const log = createLogger('server');
@@ -78,7 +79,7 @@ const mcp = new McpManager({
   cimdEnabled: config.mcp.cimdEnabled,
 });
 tools.addSource(new McpToolSource({ manager: mcp }));
-const services = createOpenAiServices(config, tools, () => settings.current().settings);
+const services = createVoiceServices(config, tools);
 const turns = createTurnsRepository(db);
 const setup = createSetupRepository(db);
 const replies = new ReplyAudioStore(config.reply.ttlMs);
@@ -128,9 +129,17 @@ const voice: VoiceRuntime = {
   startedAt: new Date(),
 };
 
-if (!services.configured) log.warn('No OpenAI key is set: add one in Settings → Advanced');
-const ttsModel = settings.current().settings.tts.model;
-if (['tts-1', 'tts-1-hd', 'gpt-4o-mini-tts'].includes(ttsModel)) {
+for (const provider of missingProviders(settings.current().settings)) {
+  log.warn(
+    `No ${provider === 'openai' ? 'OpenAI' : 'ElevenLabs'} key is set: add one in Settings → Providers`,
+  );
+}
+const currentSettings = settings.current().settings;
+const ttsModel = currentSettings.tts.model;
+if (
+  currentSettings.tts.provider === 'openai' &&
+  ['tts-1', 'tts-1-hd', 'gpt-4o-mini-tts'].includes(ttsModel)
+) {
   log.warn(
     `TTS model "${ttsModel}" shuts down on 2027-01-06 and has no Speech API replacement; ` +
       'the Realtime API mode is on the roadmap. The current model still works until then.',

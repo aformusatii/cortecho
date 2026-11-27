@@ -4,7 +4,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import OpenAI, { toFile } from 'openai';
 import { LinearResampler, parseWav, pcmToWav } from '../../apps/api/src/pipeline/audio.ts';
+// One helper for both suites: the integration runner (its own image) and the
+// production smoke harness (this host) rewrite the same streamed reply header.
+import { withRealWavLengths } from '../../onboarding/runner/lib/wav.ts';
 import type { SmokeEnv } from './env.ts';
+
+export { withRealWavLengths };
 
 /**
  * The owner's voice (spec §5): OpenAI TTS of the requests (with a disk cache)
@@ -148,26 +153,4 @@ function downmixToMono(pcm: Buffer, channels: number): Buffer {
   const out = Buffer.alloc(samples * 2);
   for (let i = 0; i < samples; i++) out.writeInt16LE(pcm.readInt16LE(i * 2 * channels), i * 2);
   return out;
-}
-
-/**
- * Cortecho streams replies with a placeholder length in the WAV header
- * (0xffffffff, the length is not known when the first byte goes out). The Echo
- * plays that, but OpenAI's transcription rejects it, so the RIFF and data sizes
- * are rewritten from the bytes actually received.
- */
-export function withRealWavLengths(wav: Buffer): Buffer {
-  if (wav.length < 12 || wav.toString('latin1', 0, 4) !== 'RIFF') return wav;
-  const fixed = Buffer.from(wav);
-  fixed.writeUInt32LE(fixed.length - 8, 4);
-  let offset = 12;
-  while (offset + 8 <= fixed.length) {
-    const id = fixed.toString('latin1', offset, offset + 4);
-    if (id === 'data') {
-      fixed.writeUInt32LE(fixed.length - offset - 8, offset + 4);
-      break;
-    }
-    offset += 8 + fixed.readUInt32LE(offset + 4);
-  }
-  return fixed;
 }

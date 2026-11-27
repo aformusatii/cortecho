@@ -20,6 +20,7 @@ Run everything from the repository root.
 | `npm run test:e2e` | Playwright against a production build, 3 viewports, two FakeEchos, no real Echo, no OpenAI key |
 | `npm run test:smoke` | Production smoke tests against the deployed Cortecho (see below) |
 | `npm run test:onboarding` | Docker onboarding E2E in the `cortecho-onboarding` Compose project (see below) |
+| `npm run test:integration` | The same Docker suite, including the provider matrix and "Listen here" scenarios (alias of `test:onboarding`) |
 | `npm run smoke:init` | Generate the simulated Echo's identity (`smoke/.env.smoke`, once) |
 | `npm run doctor` | Read-only configuration/link check (same as `cortecho doctor`) |
 | `npm run db:generate` | New migration after editing `apps/api/src/db/schema.ts` |
@@ -101,17 +102,25 @@ deployment and money.
   at `SMOKE_ROOM_DBFS` (-60), and an answer 1 s after a follow-up opens.
 - Each run writes `smoke/.runs/<run id>/report.md` plus per-step WAVs, wire
   events, transcripts and logs. The suite reads `report.md` first.
+- `scenarios/providers.smoke.ts` exercises the per-Echo provider overrides: it
+  sets the Test Echo's own `stt.provider` / `tts.provider`, says "What time is
+  it?" for each ElevenLabs combination, checks the per-turn provider log line
+  and the played reply, then previews "Listen here" and an announcement through
+  ElevenLabs. It only writes the Test Echo's overrides and restores them in
+  `afterEach`; the real Echo and the global settings are untouched. When the
+  deployment has no ElevenLabs key (`hasKeys['elevenlabs.apiKey']` false) the
+  ElevenLabs tests are skipped with that reason, never failed.
 
 The simulated Echo is `apps/api/src/esphome/fake-echo.ts` (`timing: 'real'`);
 the smoke harness lives in `smoke/harness/`. Mail verification/cleanup
 (§6.4) is an interface with a `skip` implementation until `SMOKE_MAIL_*` is
 configured — it reports "skipped", never fails.
 
-## Onboarding E2E (on demand)
+## Integration / onboarding E2E (on demand)
 
-The onboarding suite in `onboarding/` proves that a fresh install of the shipped
-Docker image onboards a brand-new Echo Dot (hassmic / ESPHome native API) end
-to end, as on a home LAN:
+The suite in `onboarding/` proves that a fresh install of the shipped Docker
+image onboards a brand-new Echo Dot (hassmic / ESPHome native API) end to end,
+as on a home LAN, and that both voice providers work through the same image:
 
 - Cortecho is the real image from the repository `Dockerfile`, with an empty
   data volume, no API key and no `ECHO_*` or `DISCOVERY_EXTRA_TARGETS`.
@@ -122,28 +131,42 @@ to end, as on a home LAN:
   the lab network's `.10`.
 - Adoption is the real probe and Noise `SetKey`; the chime and the voice reply
   are really downloaded from `http://<cortecho>:3000`.
-- The OpenAI check is server-side. `openai-gw` is the only container with
-  internet: in `mock` mode it answers deterministically; in `real` mode it
-  proxies to OpenAI with `OPENAI_API_KEY_E2E`, so the real key never reaches
-  Cortecho, the browser, the video or the trace.
+- The provider checks are server-side. `openai-gw` is the only container with
+  internet and the AI gateway for both providers: OpenAI stays on `/v1/*`,
+  ElevenLabs on `/elevenlabs/*`. In `mock` mode it answers deterministically;
+  in `real` mode it injects `OPENAI_API_KEY_E2E` / `ELEVENLABS_API_KEY_E2E`, so
+  the real keys never reach Cortecho, the browser, the video or the trace.
+  Cortecho reaches it through the environment-only `ELEVENLABS_BASE_URL`.
+- After onboarding and the restart, the `@integration` phase adds: saving and
+  testing an ElevenLabs key (including a scoped key), the four provider
+  combinations (reply WAV is RIFF/24 kHz/mono, the gateway saw exactly the
+  expected STT and TTS calls, and in real mode the reply transcribes to a
+  time), "Listen here" in Chromium and WebKit (playback actually starts), and
+  an announcement through ElevenLabs.
+- In `real` mode without `ELEVENLABS_API_KEY_E2E` the ElevenLabs scenarios are
+  skipped with a clear reason (not failed); mock mode always runs them.
 
 Run it locally (Docker required):
 
 ```bash
-npm run test:onboarding                                  # mock OpenAI, no cost
-OPENAI_MODE=real OPENAI_API_KEY_E2E=sk-... npm run test:onboarding
-CORTECHO_IMAGE=ghcr.io/owner/cortecho:latest npm run test:onboarding
+npm run test:integration                                 # mock providers, no cost
+OPENAI_MODE=real OPENAI_API_KEY_E2E=sk-... npm run test:integration
+OPENAI_MODE=real OPENAI_API_KEY_E2E=sk-... ELEVENLABS_API_KEY_E2E=... npm run test:integration
+CORTECHO_IMAGE=ghcr.io/owner/cortecho:latest npm run test:integration
 ```
 
 It writes `onboarding/out/`: `summary.md`, the self-contained Playwright HTML
 report with videos and traces (`report/`), one screenshot per step (`steps/`),
-the Echo's media (`media/`), `facts.json`, `openai-calls.json` and `logs/`.
+the Echo's media (`media/`), `facts.json`, `openai-calls.json` (both providers,
+each call tagged with `service`) and `logs/`.
 The suite starts only containers, networks and the volume in the
 `cortecho-onboarding` project and removes them with `down -v` afterwards.
 
 In Actions, run **Onboarding E2E** with `openai=real|mock` (default `real`) and
-an optional `image` (empty = build this ref). Every run uploads the report
-artifact. Runs on `main` also publish the report to GitHub Pages.
+an optional `image` (empty = build this ref). The optional
+`ELEVENLABS_API_KEY_E2E` secret enables the ElevenLabs scenarios in real mode;
+without it they are skipped. Every run uploads the report artifact. Runs on
+`main` also publish the report to GitHub Pages.
 
 What it does **not** prove: `FakeEcho` models hassmic, not the Echo hardware,
 firmware, microphone, speaker or the local wake-word engine. It does not test a
@@ -198,9 +221,10 @@ messages.
 
 ## Dependencies
 
-On top of the template: **`openai`** (transcription, Responses API, speech).
-The ESPHome protobuf subset, the Noise handshake (on `node:crypto`), VAD, WAV
-and resampling are hand-written. The runtime image needs `tzdata` for the POSIX
+On top of the template: **`openai`** (OpenAI transcription, Responses API and
+speech). ElevenLabs is called with plain `fetch` (no SDK), so it adds no
+dependency. The ESPHome protobuf subset, the Noise handshake (on
+`node:crypto`), VAD, WAV and resampling are hand-written. The runtime image needs `tzdata` for the POSIX
 time zone rule.
 
 ## Branding assets

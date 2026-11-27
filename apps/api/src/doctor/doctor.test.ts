@@ -131,6 +131,110 @@ describe('runDoctor', () => {
     }
   });
 
+  it('checks ElevenLabs only when a stage selects it', async () => {
+    const ctx = createTestRuntime();
+    try {
+      const before = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: [],
+        production: false,
+        env: {},
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      expect(before.checks.some((check) => check.name.startsWith('ElevenLabs'))).toBe(false);
+
+      ctx.settings.apply({ 'stt.provider': 'elevenlabs' }, ctx.settings.version);
+      const missing = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: [],
+        production: false,
+        env: {},
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      expect(missing.checks.find((check) => check.name === 'ElevenLabs key')).toMatchObject({
+        status: 'fail',
+        fix: expect.stringContaining('Settings → Providers'),
+      });
+      expect(missing.checks.find((check) => check.name === 'ElevenLabs transcription model')).toMatchObject({
+        status: 'pass',
+      });
+      expect(missing.checks.find((check) => check.name === 'ElevenLabs endpoint')?.status).toBe('skip');
+    } finally {
+      ctx.sqlite.close();
+    }
+  });
+
+  it('passes the ElevenLabs endpoint check with a key, and warns about an unknown model', async () => {
+    const ctx = createTestRuntime();
+    try {
+      ctx.settings.apply(
+        {
+          'tts.provider': 'elevenlabs',
+          'tts.elevenlabsModel': 'my-custom-model',
+          'elevenlabs.apiKey': 'el-key',
+        },
+        ctx.settings.version,
+      );
+      const report = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: [],
+        production: false,
+        env: {},
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      expect(report.checks.find((check) => check.name === 'ElevenLabs key')?.status).toBe('pass');
+      expect(report.checks.find((check) => check.name === 'ElevenLabs endpoint')?.status).toBe('pass');
+      expect(report.checks.find((check) => check.name === 'ElevenLabs voice model')?.status).toBe('warn');
+      // The OpenAI TTS deprecation warning does not apply to an ElevenLabs voice.
+      expect(report.checks.some((check) => check.name === 'TTS model')).toBe(false);
+    } finally {
+      ctx.sqlite.close();
+    }
+  });
+
+  it('warns when one Echo overrides the provider but its key is missing', async () => {
+    const ctx = createTestRuntime({
+      devices: [
+        { name: 'Kitchen', port: 26053, overrides: { 'tts.provider': 'elevenlabs' } },
+        { name: 'Study', port: 26054 },
+      ],
+    });
+    try {
+      const report = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: ctx.repository.list(),
+        production: false,
+        env: {},
+        probe: async (): Promise<EchoProbeResult> => ({ reachable: false, code: 'unreachable' }),
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      const warning = report.checks.find((check) => check.name === 'ElevenLabs key (Echo "Kitchen")');
+      expect(warning).toMatchObject({ status: 'warn' });
+      expect(warning?.detail).toContain('text-to-speech');
+      // Only the Echo that overrides is named, and the global check did not run.
+      expect(report.checks.some((check) => check.name === 'ElevenLabs key')).toBe(false);
+      expect(report.checks.some((check) => check.name.includes('Echo "Study"'))).toBe(false);
+
+      ctx.settings.apply({ 'elevenlabs.apiKey': 'el-key' }, ctx.settings.version);
+      const configured = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: ctx.repository.list(),
+        production: false,
+        env: {},
+        probe: async (): Promise<EchoProbeResult> => ({ reachable: false, code: 'unreachable' }),
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      expect(configured.checks.some((check) => check.name === 'ElevenLabs key (Echo "Kitchen")')).toBe(false);
+    } finally {
+      ctx.sqlite.close();
+    }
+  });
+
   it('serves the same report from GET /api/doctor', async () => {
     const ctx = createTestRuntime();
     try {

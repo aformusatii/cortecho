@@ -57,6 +57,7 @@ export type EchoState = {
 
 export type OpenAiCall = {
   at: string;
+  service?: 'openai' | 'elevenlabs';
   method: string;
   path: string;
   status: number;
@@ -76,6 +77,12 @@ export function echoJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function gatewayJson<T>(path: string): Promise<T> {
   return fetchJson<T>(`${GATEWAY_URL}${path}`);
+}
+
+/** Forgets the gateway's call list, so one provider combination is isolated. */
+export async function resetGatewayCalls(): Promise<void> {
+  const response = await fetch(`${GATEWAY_URL}/calls/reset`, { method: 'POST' });
+  if (!response.ok) throw new Error(`gateway reset: HTTP ${response.status}`);
 }
 
 export function sleep(ms: number): Promise<void> {

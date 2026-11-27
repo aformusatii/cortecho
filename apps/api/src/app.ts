@@ -10,6 +10,7 @@ import { createDevicesRoutes } from './features/devices/devices.routes.ts';
 import { createDiscoveryRoutes } from './features/discovery/discovery.routes.ts';
 import { createDoctorRoutes } from './features/doctor/doctor.routes.ts';
 import { createMcpRoutes } from './features/mcp/mcp.routes.ts';
+import { createProviderRoutes } from './features/providers/providers.routes.ts';
 import { createSettingsRoutes } from './features/settings/settings.routes.ts';
 import { createSetupRoutes } from './features/setup/setup.routes.ts';
 import { buildHealth, createVoiceRoutes } from './features/voice/voice.routes.ts';
@@ -57,6 +58,11 @@ export function createApp({
         // Radix positions popovers with inline `style` attributes.
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:'],
+        // "Listen here" plays an Audio element from a blob URL (a data: URL
+        // unlocks it on iOS). Without media-src these are refused by
+        // default-src. Voice-picker samples come through our same-origin
+        // proxy ('self'), so no external media host is allowed.
+        mediaSrc: ["'self'", 'blob:', 'data:'],
         fontSrc: ["'self'"],
         connectSrc: ["'self'"],
         manifestSrc: ["'self'"],
@@ -101,6 +107,7 @@ export function createApp({
   app.route('/api', createDevicesRoutes(voice));
   app.route('/api', createDiscoveryRoutes(voice));
   app.route('/api', createSettingsRoutes(voice));
+  app.route('/api', createProviderRoutes(voice, { fetchImpl }));
   app.route('/api', createSetupRoutes(voice, { fetchImpl }));
   app.route('/api', createMcpRoutes(voice));
   app.route('/api', createDoctorRoutes(voice));
