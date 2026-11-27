@@ -27,7 +27,11 @@ export function createProviderRoutes(
   runtime: VoiceRuntime,
   { fetchImpl = fetch }: { fetchImpl?: typeof fetch } = {},
 ) {
-  const providers = createProvidersService({ settings: runtime.settings, fetchImpl });
+  const providers = createProvidersService({
+    settings: runtime.settings,
+    baseUrl: runtime.config.elevenlabs.baseUrl,
+    fetchImpl,
+  });
 
   const storedKey = (key: 'openai.apiKey' | 'elevenlabs.apiKey'): string =>
     (key === 'openai.apiKey'
@@ -100,7 +104,13 @@ export function createProviderRoutes(
       .post('/settings/check-elevenlabs', validate('json', providerKeyCheckSchema), async (c) => {
         const apiKey = (c.req.valid('json').apiKey?.trim() || storedKey('elevenlabs.apiKey')).trim();
         if (apiKey === '') throw validationError({ apiKey: 'Enter an ElevenLabs API key first.' });
-        return c.json(await checkElevenLabsKey({ apiKey, fetchImpl }));
+        return c.json(
+          await checkElevenLabsKey({
+            apiKey,
+            baseUrl: runtime.config.elevenlabs.baseUrl,
+            fetchImpl,
+          }),
+        );
       })
   );
 }

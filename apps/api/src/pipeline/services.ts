@@ -88,8 +88,12 @@ export type VoiceServices = {
   stt: SpeechToText;
   agent: Agent;
   tts: TextToSpeech;
-  /** False when a key a stage needs (OpenAI for thinking, or a selected audio provider) is missing. */
-  readonly configured: boolean;
+  /**
+   * True when a snapshot has the keys its stages need (OpenAI for thinking, or
+   * a selected audio provider). Takes the snapshot, never the global settings:
+   * an Echo may select a provider the global configuration does not use.
+   */
+  isConfigured(settings: Settings): boolean;
   /**
    * Opens the connection to the AI services ahead of the first request of a
    * turn (called at the wake word). Never throws.

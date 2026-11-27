@@ -79,7 +79,7 @@ const mcp = new McpManager({
   cimdEnabled: config.mcp.cimdEnabled,
 });
 tools.addSource(new McpToolSource({ manager: mcp }));
-const services = createVoiceServices(config, tools, () => settings.current().settings);
+const services = createVoiceServices(config, tools);
 const turns = createTurnsRepository(db);
 const setup = createSetupRepository(db);
 const replies = new ReplyAudioStore(config.reply.ttlMs);

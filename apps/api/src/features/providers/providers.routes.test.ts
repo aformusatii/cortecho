@@ -72,6 +72,23 @@ async function setup() {
 }
 
 describe('ElevenLabs provider routes', () => {
+  it('calls the configured ELEVENLABS_BASE_URL (a proxy) for the lists', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith('/v2/voices')) return Response.json({ voices: [] });
+      return Response.json([]);
+    });
+    ctx = createTestRuntime({
+      fetchImpl,
+      env: { ELEVENLABS_BASE_URL: 'http://gw.test:8080/elevenlabs/' },
+    });
+    await ctx.app.request('/api/settings', patch({ version: 0, changes: { 'elevenlabs.apiKey': 'el-key' } }));
+    await ctx.app.request('/api/settings/elevenlabs-voices');
+    expect(calls).toContain('http://gw.test:8080/elevenlabs/v2/voices');
+  });
+
   it('degrades to empty lists and a 404 preview without a key', async () => {
     ctx = createTestRuntime({ fetchImpl: providerFetch().fetchImpl });
     const voices = await ctx.app.request('/api/settings/elevenlabs-voices');

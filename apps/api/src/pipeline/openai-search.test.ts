@@ -25,8 +25,7 @@ function testSettings(): Settings {
 }
 
 function services() {
-  const settings = testSettings();
-  return createVoiceServices(loadConfig(), new ToolRegistry(), () => settings);
+  return createVoiceServices(loadConfig(), new ToolRegistry());
 }
 
 function context() {

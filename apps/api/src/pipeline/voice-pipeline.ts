@@ -25,7 +25,7 @@ import { CHIME_SAMPLE_RATE, chimePcm } from './chime.ts';
 import type { PromptDevice } from './prompt-layers.ts';
 import type { ReplyAudio, ReplyAudioStore } from './reply-audio.ts';
 import { firstSentence, headThenRest } from './reply-speech.ts';
-import type { VoiceServices } from './services.ts';
+import { missingProviders, NotConfiguredError, type VoiceServices } from './services.ts';
 
 const log = createLogger('pipeline');
 
@@ -284,6 +284,16 @@ export class VoicePipeline {
       wakeWord: request.wakeWordPhrase || undefined,
       flags: request.flags,
       settingsVersion: snapshot.version,
+      stages: {
+        stt: {
+          provider: settings.stt.provider,
+          model: settings.stt.provider === 'elevenlabs' ? settings.stt.elevenlabsModel : settings.stt.model,
+        },
+        tts: {
+          provider: settings.tts.provider,
+          model: settings.tts.provider === 'elevenlabs' ? settings.tts.elevenlabsModel : settings.tts.model,
+        },
+      },
       vad: {
         noSpeechTimeoutMs: vadOptions.noSpeechTimeoutMs,
         endSilenceMs: vadOptions.endSilenceMs,
@@ -301,6 +311,23 @@ export class VoicePipeline {
       deadline: null,
       deadlineAtMs: null,
     };
+    // A key is missing for this Echo's snapshot (maybe only because of a
+    // per-Echo provider override): fail now, before the user speaks, instead of
+    // after transcription or with an apology the missing provider cannot say.
+    if (!this.options.services.isConfigured(turn.settings)) {
+      const missing = missingProviders(turn.settings);
+      const reason = missing[0]
+        ? new NotConfiguredError(missing[0]).message
+        : 'A provider is not configured.';
+      log.warn('turn cannot start: provider not configured', { providers: missing });
+      this.turn = turn;
+      this.event(turn, VA_EVENT.RUN_START);
+      this.event(turn, VA_EVENT.ERROR, { code: 'pipeline-error', message: reason.slice(0, 200) });
+      this.event(turn, VA_EVENT.RUN_END);
+      turn.handedOver = true;
+      this.finish(turn, 'error', reason);
+      return;
+    }
     // The user is about to speak for a few seconds: time to open the connection.
     this.options.services.warmUp?.(settings);
     turn.deadline = setTimeout(() => {

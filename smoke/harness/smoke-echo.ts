@@ -1,4 +1,4 @@
-import type { DeviceStatus, Turn } from '@cortecho/shared';
+import type { DeviceStatus, Turn, VoiceSampleRequest } from '@cortecho/shared';
 import { FakeEcho } from '../../apps/api/src/esphome/fake-echo.ts';
 import { parseApiKey } from '../../apps/api/src/esphome/noise.ts';
 import { pcmToWav } from '../../apps/api/src/pipeline/audio.ts';
@@ -306,6 +306,23 @@ export class SmokeEcho {
   /** POST /api/say to this Echo (or to all, `@audible`). */
   async announce(text: string, { all = false }: { all?: boolean } = {}): Promise<void> {
     await this.api.say(text, all ? { all: true } : { deviceId: this.deviceId ?? undefined });
+  }
+
+  /** POST /api/say, returning the WAV the Echo downloaded (null when none arrived). */
+  async announceAndCapture(text: string): Promise<Buffer | null> {
+    this.lastReplyWav = null;
+    await this.announce(text);
+    return this.lastReplyWav;
+  }
+
+  /** Whether the deployment has one provider's key stored (the skip guard). */
+  async hasKey(key: 'openai.apiKey' | 'elevenlabs.apiKey'): Promise<boolean> {
+    return (await this.api.settings()).hasKeys[key] === true;
+  }
+
+  /** The draft voice's sample from POST /api/settings/voice-sample (no Echo, no turn). */
+  voiceSample(input: VoiceSampleRequest): Promise<Buffer> {
+    return this.api.voiceSample(input);
   }
 
   /** Waits, for idle-time behaviour. */

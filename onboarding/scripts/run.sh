@@ -22,6 +22,17 @@ if [[ "$OPENAI_MODE" == "real" && -z "${OPENAI_API_KEY_E2E:-}" ]]; then
   exit 2
 fi
 
+# ElevenLabs follows the OpenAI mode: deterministic in mock, the real account
+# with a key, and a clear skip (not a failure) when a real run has no key.
+if [[ "$OPENAI_MODE" == "mock" ]]; then
+  ELEVENLABS_MODE="mock"
+elif [[ -n "${ELEVENLABS_API_KEY_E2E:-}" ]]; then
+  ELEVENLABS_MODE="real"
+else
+  ELEVENLABS_MODE="skip"
+  echo "ELEVENLABS_API_KEY_E2E is not set: the ElevenLabs scenarios will be skipped." >&2
+fi
+
 if [[ -z "${CORTECHO_IMAGE:-}" ]]; then
   CORTECHO_IMAGE="cortecho:onboarding"
   docker build -t "$CORTECHO_IMAGE" "$ROOT"
@@ -30,11 +41,21 @@ fi
 export CORTECHO_IMAGE
 export OPENAI_MODE
 export OPENAI_API_KEY_E2E="${OPENAI_API_KEY_E2E:-}"
+export ELEVENLABS_MODE
+export ELEVENLABS_API_KEY_E2E="${ELEVENLABS_API_KEY_E2E:-}"
+export ELEVENLABS_ENABLED="$([[ "$ELEVENLABS_MODE" == "skip" ]] && echo false || echo true)"
 export ECHO_FRIENDLY_NAME="${ECHO_FRIENDLY_NAME:-Echo Dot 2 5c0e11}"
 export ONBOARDING_IMAGE="$CORTECHO_IMAGE"
 export ONBOARDING_COMMIT="${GITHUB_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 export ONBOARDING_RUN_NUMBER="${GITHUB_RUN_NUMBER:-local-$(date +%s)}"
-export ONBOARDING_TOTAL_STEPS=12
+# 12 onboarding/restart steps; with ElevenLabs: 3 providers + 4 combinations +
+# 4 "Listen here" (two providers in Chromium and WebKit) + 1 announcement.
+if [[ "$ELEVENLABS_MODE" == "skip" ]]; then
+  ONBOARDING_TOTAL_STEPS=13
+else
+  ONBOARDING_TOTAL_STEPS=24
+fi
+export ONBOARDING_TOTAL_STEPS
 export ONBOARDING_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 cleanup() {
@@ -80,6 +101,8 @@ if run_phase setup; then
     result=1
   elif ! run_phase restart; then
     result=1
+  elif ! run_phase integration; then
+    result=1
   fi
 else
   result=1
@@ -91,8 +114,15 @@ set +e
   -e PLAYWRIGHT_JSON_OUTPUT_FILE=/out/results.json \
   runner npx playwright merge-reports --reporter=html,json /out/blobs
 merge_status=$?
+# Belt and braces: the phase's exit code should already be non-zero, but the
+# merged report is the record CI and the owner read, so fail on it directly.
+if ! "${COMPOSE[@]}" exec -T runner node -e \
+  'const results = require("/out/results.json"); process.exit((results.stats?.unexpected ?? 0) > 0 ? 1 : 0)'; then
+  echo "Playwright reported failing tests: see onboarding/out/results.json" >&2
+  result=1
+fi
 "${COMPOSE[@]}" exec -T runner node -e \
-  'fetch(process.env.GATEWAY_URL + "/calls").then((r) => r.text()).then((t) => require("node:fs").writeFileSync("/out/openai-calls.json", t)).catch(() => {})' \
+  'fetch(process.env.GATEWAY_URL + "/calls/all").then((r) => r.text()).then((t) => require("node:fs").writeFileSync("/out/openai-calls.json", t)).catch(() => {})' \
   >/dev/null 2>&1
 "${COMPOSE[@]}" exec -T runner node /tests/summary.ts
 summary_status=$?

@@ -185,6 +185,17 @@ export type Health = {
     stt: HealthStage;
     thinking: HealthStage & { provider: 'openai' };
     tts: HealthStage;
+    /**
+     * Echos whose per-Echo overrides change the audio stages from the global
+     * ones. Empty when every Echo inherits the global providers. Additive data
+     * for the status page; a missing key shows as `configured: false`.
+     */
+    echoOverrides: Array<{
+      deviceId: number;
+      deviceName: string;
+      stt: HealthStage;
+      tts: HealthStage;
+    }>;
   };
   tools: string[];
   /** One entry per configured connector, for the status page. */

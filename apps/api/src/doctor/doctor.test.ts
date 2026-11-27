@@ -195,6 +195,46 @@ describe('runDoctor', () => {
     }
   });
 
+  it('warns when one Echo overrides the provider but its key is missing', async () => {
+    const ctx = createTestRuntime({
+      devices: [
+        { name: 'Kitchen', port: 26053, overrides: { 'tts.provider': 'elevenlabs' } },
+        { name: 'Study', port: 26054 },
+      ],
+    });
+    try {
+      const report = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: ctx.repository.list(),
+        production: false,
+        env: {},
+        probe: async (): Promise<EchoProbeResult> => ({ reachable: false, code: 'unreachable' }),
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      const warning = report.checks.find((check) => check.name === 'ElevenLabs key (Echo "Kitchen")');
+      expect(warning).toMatchObject({ status: 'warn' });
+      expect(warning?.detail).toContain('text-to-speech');
+      // Only the Echo that overrides is named, and the global check did not run.
+      expect(report.checks.some((check) => check.name === 'ElevenLabs key')).toBe(false);
+      expect(report.checks.some((check) => check.name.includes('Echo "Study"'))).toBe(false);
+
+      ctx.settings.apply({ 'elevenlabs.apiKey': 'el-key' }, ctx.settings.version);
+      const configured = await runDoctor({
+        config: ctx.runtime.config,
+        settings: ctx.settings,
+        devices: ctx.repository.list(),
+        production: false,
+        env: {},
+        probe: async (): Promise<EchoProbeResult> => ({ reachable: false, code: 'unreachable' }),
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      expect(configured.checks.some((check) => check.name === 'ElevenLabs key (Echo "Kitchen")')).toBe(false);
+    } finally {
+      ctx.sqlite.close();
+    }
+  });
+
   it('serves the same report from GET /api/doctor', async () => {
     const ctx = createTestRuntime();
     try {

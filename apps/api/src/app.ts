@@ -58,6 +58,11 @@ export function createApp({
         // Radix positions popovers with inline `style` attributes.
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:'],
+        // "Listen here" plays an Audio element from a blob URL (a data: URL
+        // unlocks it on iOS). Without media-src these are refused by
+        // default-src. Voice-picker samples come through our same-origin
+        // proxy ('self'), so no external media host is allowed.
+        mediaSrc: ["'self'", 'blob:', 'data:'],
         fontSrc: ["'self'"],
         connectSrc: ["'self'"],
         manifestSrc: ["'self'"],

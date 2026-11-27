@@ -120,6 +120,32 @@ test.describe('Echos', () => {
     await page.getByRole('link', { name: 'All Echos' }).click();
     await expect(page.getByRole('region', { name: 'Study Room' }).getByText('0 overrides')).toBeVisible();
 
+    // Tuning: this Echo can use its own voice provider, and inherit it again.
+    await page.getByRole('link', { name: 'Open Study Room' }).click();
+    await page.getByRole('tab', { name: 'Tuning' }).click();
+    const providerOverride = page.getByRole('switch', { name: 'Override Text-to-speech provider' });
+    await expect(providerOverride).not.toBeChecked();
+    await providerOverride.click();
+    await page.getByLabel('Text-to-speech provider', { exact: true }).selectOption('elevenlabs');
+    // Inherited fields render as "Inherits the global value", not as controls.
+    await expect(page.getByText('ElevenLabs voice', { exact: true })).toBeVisible();
+    await expect(page.getByText('ElevenLabs stability', { exact: true })).toBeVisible();
+    await expect(page.locator('#setting-tts-model')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Save for this Echo' }).click();
+    await expect(page.getByText(/settings saved/).first()).toBeVisible();
+
+    await page.getByRole('link', { name: 'All Echos' }).click();
+    await expect(page.getByRole('region', { name: 'Study Room' }).getByText('1 override')).toBeVisible();
+
+    await page.getByRole('link', { name: 'Open Study Room' }).click();
+    await page.getByRole('tab', { name: 'Tuning' }).click();
+    await page.getByRole('switch', { name: 'Override Text-to-speech provider' }).click();
+    await page.getByRole('button', { name: 'Save for this Echo' }).click();
+    await expect(page.getByText(/settings saved/).first()).toBeVisible();
+
+    await page.getByRole('link', { name: 'All Echos' }).click();
+    await expect(page.getByRole('region', { name: 'Study Room' }).getByText('0 overrides')).toBeVisible();
+
     // Delete, with confirmation: the warning names the key.
     await page.getByRole('link', { name: 'Open Study Room' }).click();
     await page.getByRole('tab', { name: 'Delete' }).click();

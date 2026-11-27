@@ -11,6 +11,7 @@ services:
       # A fixed test secret (32 zero bytes, base64). Not a production key.
       CORTECHO_SECRET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       OPENAI_BASE_URL: http://${ONBOARDING_SUBNET:-10.231.47}.30:8080/v1
+      ELEVENLABS_BASE_URL: http://${ONBOARDING_SUBNET:-10.231.47}.30:8080/elevenlabs
       LOG_LEVEL: debug
     volumes:
       - cortecho-data:/app/data
@@ -45,8 +46,10 @@ services:
       dockerfile: onboarding/openai-gw/Dockerfile
     environment:
       OPENAI_MODE: ${OPENAI_MODE:-mock}
-      # The real key lives only here; Cortecho only ever sees the dummy one.
+      ELEVENLABS_MODE: ${ELEVENLABS_MODE:-mock}
+      # The real keys live only here; Cortecho only ever sees the dummy ones.
       OPENAI_API_KEY: ${OPENAI_API_KEY_E2E:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY_E2E:-}
     networks:
       lan:
         ipv4_address: ${ONBOARDING_SUBNET:-10.231.47}.30
@@ -64,10 +67,13 @@ services:
       ECHO_PORT: "26053"
       ECHO_FRIENDLY_NAME: ${ECHO_FRIENDLY_NAME:-Echo Dot 2 5c0e11}
       OPENAI_MODE: ${OPENAI_MODE:-mock}
+      ELEVENLABS_MODE: ${ELEVENLABS_MODE:-mock}
+      ELEVENLABS_ENABLED: ${ELEVENLABS_ENABLED:-true}
       ONBOARDING_IMAGE: ${CORTECHO_IMAGE:-cortecho:onboarding}
       ONBOARDING_COMMIT: ${ONBOARDING_COMMIT:-unknown}
       ONBOARDING_RUN_NUMBER: ${ONBOARDING_RUN_NUMBER:-local}
-      ONBOARDING_TOTAL_STEPS: "12"
+      # 12 onboarding/restart steps, or 24 with ElevenLabs (run.sh sets it).
+      ONBOARDING_TOTAL_STEPS: ${ONBOARDING_TOTAL_STEPS:-24}
       ONBOARDING_STARTED_AT: ${ONBOARDING_STARTED_AT:-}
     networks:
       lan:

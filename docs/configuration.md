@@ -31,6 +31,7 @@ has no authentication).
 | `REPLY_AUDIO_TTL_MS` | `120000` | How long a reply URL stays valid |
 | `DISCOVERY_EXTRA_TARGETS` | *(none)* | Comma-separated `host:port` additions to the network scan (an Echo on another subnet, tests). The scan only connects to private IPv4 addresses |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible server (proxies, local models). The key and models stay in Settings; the server must implement the Responses API, streaming speech and audio transcription |
+| `ELEVENLABS_BASE_URL` | `https://api.elevenlabs.io` | ElevenLabs-compatible server (proxies, tests). The key and voice/model choices stay in Settings; the paths are the API's own (`/v1/…`, `/v2/…`) |
 | `DEBUG_AUDIO_DIR` | *(unset)* | Save each utterance as a WAV (your voice!). Debug only |
 | `DEBUG_AUDIO_KEEP` | `20` | Number of recordings kept |
 | `TOOL_TIMEOUT_MS` | `8000` | Per-tool timeout |

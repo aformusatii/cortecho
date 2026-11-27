@@ -33,6 +33,8 @@ type RawClient = {
   socket: net.Socket;
   messages: ApiMessage[];
   send: (type: number, payload: Buffer) => void;
+  /** Resolves once this socket is closed, so a test can await the teardown. */
+  closed: Promise<void>;
 };
 
 /** A plaintext client (no key): hello, then whatever the test sends. */
@@ -44,22 +46,51 @@ function rawPlaintextClient(port: number): Promise<RawClient> {
     socket.on('data', (chunk) => {
       for (const m of codec.push(chunk)) messages.push(m);
     });
+    const closed = new Promise<void>((resolveClose) => socket.once('close', () => resolveClose()));
     socket.once('error', reject);
     socket.once('connect', () => {
       socket.write(codec.encode(MSG.HELLO_REQUEST, encodeHelloRequest('raw')));
-      resolve({ socket, messages, send: (type, payload) => socket.write(codec.encode(type, payload)) });
+      resolve({
+        socket,
+        messages,
+        closed,
+        send: (type, payload) => socket.write(codec.encode(type, payload)),
+      });
     });
   });
 }
 
-/** A Noise client with `key`: handshake, then hello. */
+/**
+ * A Noise client with `key`: handshake, then hello. Once the transport exists
+ * every later frame is decoded with it; the old version re-read any frame whose
+ * first byte was 0 as another handshake message, which threw NoiseError after
+ * the key had changed (an uncaught exception in this event handler).
+ */
 function rawNoiseClient(port: number, key: Buffer): Promise<RawClient> {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: '127.0.0.1', port });
     const initiator = new NoiseInitiator(key);
     const reader = new NoiseFrameReader();
-    let frames = 0;
     const messages: ApiMessage[] = [];
+    let codec: NoiseTransportCodec | null = null;
+    let frames = 0;
+    let settled = false;
+    let closed = false;
+    const closedPromise = new Promise<void>((resolveClose) => {
+      socket.once('close', () => {
+        closed = true;
+        resolveClose();
+      });
+    });
+    const fail = (error: unknown): void => {
+      if (closed) return; // already torn down: a late frame is not a test failure
+      socket.destroy();
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    };
+    socket.on('error', fail);
     socket.on('connect', () => {
       const msg1 = initiator.writeMessage1();
       socket.write(
@@ -70,20 +101,54 @@ function rawNoiseClient(port: number, key: Buffer): Promise<RawClient> {
       );
     });
     socket.on('data', (chunk) => {
-      for (const frame of reader.push(chunk)) {
+      if (closed) return;
+      let bodies: Buffer[];
+      try {
+        bodies = reader.push(chunk);
+      } catch (error) {
+        fail(error);
+        return;
+      }
+      for (const body of bodies) {
+        if (closed) return;
+        if (codec) {
+          try {
+            messages.push(codec.decodeFrame(body));
+          } catch (error) {
+            fail(error);
+            return;
+          }
+          continue;
+        }
         frames += 1;
         if (frames === 1) continue; // server hello
-        if (frame[0] !== 0)
-          return reject(new Error(`handshake refused: ${frame.subarray(1).toString('utf8')}`));
-        const { transport } = initiator.readMessage2(frame.subarray(1));
-        const codec = new NoiseTransportCodec(transport.send, transport.receive);
-        const rest = reader.takeRest();
-        if (rest.length > 0) for (const m of codec.push(rest)) messages.push(m);
-        socket.write(codec.encode(MSG.HELLO_REQUEST, encodeHelloRequest('raw')));
-        resolve({ socket, messages, send: (type, payload) => socket.write(codec.encode(type, payload)) });
+        if (body[0] !== 0) {
+          fail(new Error(`handshake refused: ${body.subarray(1).toString('utf8')}`));
+          return;
+        }
+        try {
+          const { transport } = initiator.readMessage2(body.subarray(1));
+          codec = new NoiseTransportCodec(transport.send, transport.receive);
+          const rest = reader.takeRest();
+          if (rest.length > 0) for (const m of codec.push(rest)) messages.push(m);
+          socket.write(codec.encode(MSG.HELLO_REQUEST, encodeHelloRequest('raw')));
+        } catch (error) {
+          fail(error);
+          return;
+        }
+        if (!settled) {
+          settled = true;
+          resolve({
+            socket,
+            messages,
+            closed: closedPromise,
+            send: (type, payload) => {
+              if (codec && !socket.destroyed) socket.write(codec.encode(type, payload));
+            },
+          });
+        }
       }
     });
-    socket.once('error', reject);
   });
 }
 
@@ -97,15 +162,22 @@ describe('fidelity (proto_esphome.c behaviours)', () => {
     const port = await echo.start();
     const a = await rawNoiseClient(port, zero);
     const b = await rawNoiseClient(port, zero);
+    // Both links are fully established (the server answered HELLO) before any
+    // key exists, so the key switch cannot racily land mid-handshake.
+    await waitUntil(() => a.messages.some((message) => message.type === MSG.HELLO_RESPONSE));
+    await waitUntil(() => b.messages.some((message) => message.type === MSG.HELLO_RESPONSE));
     // A sets the device key over its zero-PSK link.
     a.send(MSG.NOISE_ENCRYPTION_SET_KEY_REQUEST, encodeSetKeyRequest(key.toString('base64')));
     await waitUntil(() => echo.apiKey !== null);
     // B connected before the key existed: its next message closes the link.
-    const closed = new Promise<void>((resolve) => b.socket.once('close', () => resolve()));
     b.send(MSG.PING_REQUEST, Buffer.alloc(0));
-    await closed;
+    await b.closed;
     expect(echo.echoLog).toContain('encryption: closing a connection without the key');
     await echo.stop();
+    // No frame is decoded after the teardown: the helper ignores late data once
+    // its socket is closed instead of throwing from the data handler.
+    a.socket.destroy();
+    await a.closed;
   });
 
   it('fetches the reply early on INTENT_PROGRESS with tts_start_streaming (F13)', async () => {

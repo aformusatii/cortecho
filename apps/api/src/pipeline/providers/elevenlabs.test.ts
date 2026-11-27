@@ -64,6 +64,8 @@ describe('ElevenLabs speech-to-text', () => {
     const form = init.body as FormData;
     expect(form).toBeInstanceOf(FormData);
     expect(form.get('model_id')).toBe('scribe_v3');
+    // The Echo's wake chime must not become "[beep]" in the request text.
+    expect(form.get('tag_audio_events')).toBe('false');
     expect(form.get('language_code')).toBe('en');
     expect(form.getAll('secondary_language_codes')).toEqual(['ro', 'de']);
     const file = form.get('file');
@@ -216,5 +218,22 @@ describe('ElevenLabs text-to-speech', () => {
     ).catch((reason: unknown) => reason);
     expect((error as Error).message).toContain('HTTP 403');
     expect((error as Error).message).not.toContain('el-secret-key');
+  });
+
+  it('uses ELEVENLABS_BASE_URL without a trailing slash for every request', async () => {
+    const fetchMock = stubFetch(async (url) =>
+      url.endsWith('/v1/speech-to-text')
+        ? Response.json({ text: 'ok' })
+        : audioResponse([new Uint8Array([1, 2])]),
+    );
+    const provider = createElevenLabsProvider({ baseUrl: 'http://gw:8080/elevenlabs/' });
+    const signal = new AbortController().signal;
+    await provider.transcribe(Buffer.alloc(2), 16_000, signal, elevenLabsSettings());
+    await collect(provider.synthesize('Hi', signal, elevenLabsSettings()));
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://gw:8080/elevenlabs/v1/speech-to-text',
+      'http://gw:8080/elevenlabs/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb/stream?output_format=pcm_24000',
+    ]);
   });
 });

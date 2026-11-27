@@ -13,13 +13,28 @@ export const ELEVENLABS_BASE_URL = 'https://api.elevenlabs.io';
 const SPEED_MIN = 0.7;
 const SPEED_MAX = 1.2;
 
-/** Only ever a hard-coded host; the key is never logged or put in an error. */
-type RequestOptions = {
+/**
+ * The API host. `ELEVENLABS_BASE_URL` (environment-only, like OPENAI_BASE_URL)
+ * lets a proxy sit in front; the key is still a setting and is never logged.
+ */
+export type ElevenLabsOptions = { baseUrl?: string };
+
+/** Request options: the key is never logged or put in an error. */
+type RequestOptions = ElevenLabsOptions & {
   apiKey: string;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
   timeoutMs?: number;
 };
+
+/** The configured host without a trailing slash, or the default. */
+function baseOf(baseUrl: string | undefined): string {
+  return (baseUrl ?? ELEVENLABS_BASE_URL).replace(/\/+$/, '');
+}
+
+function endpoint(baseUrl: string | undefined, path: string): string {
+  return `${baseOf(baseUrl)}${path}`;
+}
 
 function keyOf(settings: Settings): string {
   const key = settings.elevenlabs.apiKey;
@@ -62,12 +77,13 @@ function clampedSpeed(speed: number): number {
  */
 export async function listElevenLabsVoices({
   apiKey,
+  baseUrl,
   fetchImpl = fetch,
   signal = new AbortController().signal,
   timeoutMs = 5000,
 }: RequestOptions): Promise<ElevenLabsVoicesResponse> {
   try {
-    const response = await fetchImpl(`${ELEVENLABS_BASE_URL}/v2/voices`, {
+    const response = await fetchImpl(endpoint(baseUrl, '/v2/voices'), {
       headers: { 'xi-api-key': apiKey, Accept: 'application/json' },
       signal: requestSignal(signal, timeoutMs),
     });
@@ -110,12 +126,13 @@ export async function listElevenLabsVoices({
 /** The account's models; the web UI filters the text-to-speech ones. */
 export async function listElevenLabsModels({
   apiKey,
+  baseUrl,
   fetchImpl = fetch,
   signal = new AbortController().signal,
   timeoutMs = 5000,
 }: RequestOptions): Promise<ElevenLabsModelsResponse> {
   try {
-    const response = await fetchImpl(`${ELEVENLABS_BASE_URL}/v1/models`, {
+    const response = await fetchImpl(endpoint(baseUrl, '/v1/models'), {
       headers: { 'xi-api-key': apiKey, Accept: 'application/json' },
       signal: requestSignal(signal, timeoutMs),
     });
@@ -158,6 +175,7 @@ function missingPermission(detail: unknown, fallback: string): string {
  */
 export async function checkElevenLabsKey({
   apiKey,
+  baseUrl,
   fetchImpl = fetch,
   timeoutMs = 5000,
 }: Omit<RequestOptions, 'signal'>): Promise<ProviderKeyCheckResult> {
@@ -172,7 +190,7 @@ export async function checkElevenLabsKey({
   for (const probe of probes) {
     let response: Response;
     try {
-      response = await fetchImpl(`${ELEVENLABS_BASE_URL}${probe.path}`, {
+      response = await fetchImpl(endpoint(baseUrl, probe.path), {
         headers: { 'xi-api-key': key, Accept: 'application/json' },
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -202,7 +220,8 @@ export async function checkElevenLabsKey({
 }
 
 /** The ElevenLabs-backed audio stages: plain fetch, same 24 kHz PCM as OpenAI. */
-export function createElevenLabsProvider(): ElevenLabsVoiceProvider {
+export function createElevenLabsProvider(options: ElevenLabsOptions = {}): ElevenLabsVoiceProvider {
+  const baseUrl = baseOf(options.baseUrl);
   return {
     async transcribe(pcm, sampleRate, signal, current) {
       const key = keyOf(current);
@@ -214,6 +233,9 @@ export function createElevenLabsProvider(): ElevenLabsVoiceProvider {
         'utterance.wav',
       );
       form.append('model_id', model);
+      // Scribe labels non-speech sounds by default ("[beep]" for the Echo's
+      // wake chime), and that label would become part of the request text.
+      form.append('tag_audio_events', 'false');
       const languages = current.stt.languages;
       const first = languages[0];
       if (first) form.append('language_code', first);
@@ -221,7 +243,7 @@ export function createElevenLabsProvider(): ElevenLabsVoiceProvider {
       if (model === 'scribe_v3') {
         for (const language of languages.slice(1)) form.append('secondary_language_codes', language);
       }
-      const response = await fetch(`${ELEVENLABS_BASE_URL}/v1/speech-to-text`, {
+      const response = await fetch(`${baseUrl}/v1/speech-to-text`, {
         method: 'POST',
         headers: { 'xi-api-key': key },
         body: form,
@@ -236,7 +258,7 @@ export function createElevenLabsProvider(): ElevenLabsVoiceProvider {
     async *synthesize(text, signal, current) {
       const key = keyOf(current);
       const response = await fetch(
-        `${ELEVENLABS_BASE_URL}/v1/text-to-speech/${encodeURIComponent(
+        `${baseUrl}/v1/text-to-speech/${encodeURIComponent(
           current.tts.elevenlabsVoiceId,
         )}/stream?output_format=pcm_24000`,
         {
@@ -265,7 +287,7 @@ export function createElevenLabsProvider(): ElevenLabsVoiceProvider {
       if (!current.elevenlabs.apiKey) return;
       // Open the TLS connection only: /v1/user would need user_read, which a
       // scoped key may not have even though speech works.
-      fetch(`${ELEVENLABS_BASE_URL}/`, {
+      fetch(`${baseUrl}/`, {
         method: 'HEAD',
         signal: AbortSignal.timeout(5000),
       })

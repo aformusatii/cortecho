@@ -31,22 +31,19 @@ function fakeProviders() {
   return { openai, elevenlabs };
 }
 
-function servicesWith(current: Settings) {
+function servicesWith() {
   const providers = fakeProviders();
   const services = createDispatchServices({
     openai: providers.openai,
     elevenlabs: providers.elevenlabs,
     tools: new ToolRegistry(),
-    settings: () => current,
   });
   return { services, providers };
 }
 
 describe('dispatching voice services', () => {
   it('picks STT and TTS from each turn snapshot, per call', async () => {
-    const { services, providers } = servicesWith(
-      settings({ 'openai.apiKey': 'k', 'elevenlabs.apiKey': 'e' }),
-    );
+    const { services, providers } = servicesWith();
     const signal = new AbortController().signal;
 
     await services.stt.transcribe(Buffer.alloc(2), 16_000, signal, settings({ 'stt.provider': 'openai' }));
@@ -95,19 +92,20 @@ describe('dispatching voice services', () => {
     // An ElevenLabs key without a selected ElevenLabs stage is not needed.
     expect(missingProviders(settings({ 'openai.apiKey': 'k' }))).toEqual([]);
 
-    const { services } = servicesWith(settings({ 'openai.apiKey': 'k' }));
-    expect(services.configured).toBe(true);
-    const { services: unconfigured } = servicesWith(settings({ 'tts.provider': 'elevenlabs' }));
-    expect(unconfigured.configured).toBe(false);
+    // Readiness takes the snapshot: two Echos of one process can differ.
+    const { services } = servicesWith();
+    expect(services.isConfigured(settings({ 'openai.apiKey': 'k' }))).toBe(true);
+    expect(services.isConfigured(settings({ 'tts.provider': 'elevenlabs' }))).toBe(false);
+    expect(services.isConfigured(settings({ 'openai.apiKey': 'k', 'elevenlabs.apiKey': 'e' }))).toBe(true);
   });
 
   it('warm up only the providers the snapshot uses', () => {
-    const onlyOpenAi = servicesWith(settings());
+    const onlyOpenAi = servicesWith();
     onlyOpenAi.services.warmUp?.(settings());
     expect(onlyOpenAi.providers.openai.warmUp).toHaveBeenCalledTimes(1);
     expect(onlyOpenAi.providers.elevenlabs.warmUp).not.toHaveBeenCalled();
 
-    const mixed = servicesWith(settings({ 'tts.provider': 'elevenlabs' }));
+    const mixed = servicesWith();
     mixed.services.warmUp?.(settings({ 'tts.provider': 'elevenlabs' }));
     expect(mixed.providers.openai.warmUp).toHaveBeenCalledTimes(1);
     expect(mixed.providers.elevenlabs.warmUp).toHaveBeenCalledTimes(1);

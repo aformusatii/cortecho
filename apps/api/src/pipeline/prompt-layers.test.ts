@@ -63,6 +63,13 @@ describe('buildPromptLayers', () => {
     expect(layers[1]?.text).toContain('time zone is Europe/Berlin and locale de-DE');
   });
 
+  it('answers in the language of the request, not the household prompt', () => {
+    expect(BASE_RULES).toContain(
+      'Answer in the language the user spoke in this request, unless they ask for another language.',
+    );
+    expect(buildInstructions({ settings: settings() })).toContain('language the user spoke in this request');
+  });
+
   it('states the default household sentence only once', () => {
     const text = buildInstructions({ settings: settings() });
     expect(text.match(/You are a voice assistant speaking through a small smart speaker/g)).toHaveLength(1);

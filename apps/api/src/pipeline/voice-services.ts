@@ -1,4 +1,4 @@
-import type { Settings, VoiceProvider } from '@cortecho/shared';
+import type { VoiceProvider } from '@cortecho/shared';
 import type { Config } from '../config.ts';
 import type { ToolRegistry } from '../tools/registry.ts';
 import { ResponsesAgent } from './agent.ts';
@@ -23,12 +23,10 @@ export function createDispatchServices({
   openai,
   elevenlabs,
   tools,
-  settings,
 }: {
   openai: OpenAiVoice;
   elevenlabs: ElevenLabsVoiceProvider;
   tools: ToolRegistry;
-  settings: () => Settings;
 }): VoiceServices {
   const providerFor = (provider: VoiceProvider): ProviderVoice =>
     provider === 'elevenlabs' ? elevenlabs : openai;
@@ -44,9 +42,7 @@ export function createDispatchServices({
         providerFor(current.tts.provider).synthesize(text, signal, current),
     },
     agent: new ResponsesAgent({ createResponse: openai.createResponse, tools }),
-    get configured() {
-      return missingProviders(settings()).length === 0;
-    },
+    isConfigured: (current) => missingProviders(current).length === 0,
     warmUp: (current) => {
       // The agent always uses OpenAI; ElevenLabs is warmed only when a stage does.
       openai.warmUp(current);
@@ -59,14 +55,12 @@ export function createDispatchServices({
 
 /** The production services: OpenAI + ElevenLabs, dispatched from the turn snapshot. */
 export function createVoiceServices(
-  config: Pick<Config, 'openai'>,
+  config: Pick<Config, 'openai' | 'elevenlabs'>,
   tools: ToolRegistry,
-  settings: () => Settings,
 ): VoiceServices {
   return createDispatchServices({
     openai: createOpenAiProvider(config),
-    elevenlabs: createElevenLabsProvider(),
+    elevenlabs: createElevenLabsProvider(config.elevenlabs),
     tools,
-    settings,
   });
 }

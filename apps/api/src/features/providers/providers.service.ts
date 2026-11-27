@@ -14,10 +14,13 @@ type Cached<T> = { key: string; at: number; value: T };
  */
 export function createProvidersService({
   settings,
+  baseUrl,
   fetchImpl = fetch,
   now = Date.now,
 }: {
   settings: SettingsStore;
+  /** ELEVENLABS_BASE_URL (environment-only), when a proxy fronts the API. */
+  baseUrl?: string;
   fetchImpl?: typeof fetch;
   now?: () => number;
 }) {
@@ -36,7 +39,7 @@ export function createProvidersService({
       return { voices: voicesCache.value };
     }
     const timeoutMs = settings.current().settings.elevenlabs.timeoutMs;
-    const result = await listElevenLabsVoices({ apiKey, fetchImpl, timeoutMs });
+    const result = await listElevenLabsVoices({ apiKey, baseUrl, fetchImpl, timeoutMs });
     // A transient failure must not pin an empty list for ten minutes.
     if (result.voices.length > 0) voicesCache = { key: apiKey, at: now(), value: result.voices };
     return result;
@@ -49,7 +52,7 @@ export function createProvidersService({
       return { models: modelsCache.value };
     }
     const timeoutMs = settings.current().settings.elevenlabs.timeoutMs;
-    const result = await listElevenLabsModels({ apiKey, fetchImpl, timeoutMs });
+    const result = await listElevenLabsModels({ apiKey, baseUrl, fetchImpl, timeoutMs });
     if (result.models.length > 0) modelsCache = { key: apiKey, at: now(), value: result.models };
     return result;
   }

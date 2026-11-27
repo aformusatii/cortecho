@@ -53,7 +53,7 @@ export function fakeServices() {
     calls: typeof calls;
   } = {
     calls,
-    configured: true,
+    isConfigured: () => true,
     sttResult: async () => 'what time is it',
     agentResult: async () => ({ text: 'It is noon.', toolCalls: [] }),
     // 0.5 s of 24 kHz audio in 3 pieces

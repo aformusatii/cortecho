@@ -9,14 +9,16 @@ type Turn = { id: number; transcript: string | null; outcome: string };
 
 async function listDevices(request: APIRequestContext): Promise<Device[]> {
   const response = await request.get('/api/devices');
-  expect(response.status(), await response.text()).toBe(200);
-  return (await response.json()) as Device[];
+  const body = await response.text();
+  expect(response.status(), body).toBe(200);
+  return JSON.parse(body) as Device[];
 }
 
 async function readTurns(request: APIRequestContext, deviceId: number): Promise<Turn[]> {
   const response = await request.get(`/api/turns?limit=1&deviceId=${deviceId}`);
-  expect(response.status(), await response.text()).toBe(200);
-  return (await response.json()) as Turn[];
+  const body = await response.text();
+  expect(response.status(), body).toBe(200);
+  return JSON.parse(body) as Turn[];
 }
 
 test.describe('After a restart', { tag: '@restart' }, () => {

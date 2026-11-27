@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeEcho, syntheticSpeech } from '../esphome/fake-echo.ts';
 import { MSG } from '../esphome/messages.ts';
+import { setLogLevel } from '../lib/logger.ts';
 import { createTestRuntime, TEST_REPLY_BASE_URL, waitUntil } from '../test-support.ts';
 import { expectsAnswer, followUpVad } from './voice-pipeline.ts';
 
@@ -57,12 +58,23 @@ function wakeRunWithChime(): Buffer {
 let echo: FakeEcho;
 let ctx: ReturnType<typeof createTestRuntime>;
 
-type SetupOptions = { apiKey?: Buffer | null; echoKey?: Buffer | null; env?: Record<string, string> };
+type SetupOptions = {
+  apiKey?: Buffer | null;
+  echoKey?: Buffer | null;
+  env?: Record<string, string>;
+  /** Per-Echo overrides, for the provider-readiness cases. */
+  overrides?: Record<string, unknown>;
+};
 
-async function setup({ apiKey = null, echoKey = apiKey, env = {} }: SetupOptions = {}) {
+async function setup({ apiKey = null, echoKey = apiKey, env = {}, overrides }: SetupOptions = {}) {
   echo = new FakeEcho({ apiKey: echoKey });
   const port = await echo.start();
-  ctx = createTestRuntime({ echoPort: port, apiKey, env });
+  ctx = createTestRuntime({
+    echoPort: port,
+    apiKey,
+    env,
+    ...(overrides ? { devices: [{ name: 'Echo', port, apiKey, overrides }] } : {}),
+  });
   echo.fetchAudio = ctx.fetchAudio;
   ctx.client.start();
 }
@@ -137,6 +149,51 @@ describe('connecting', () => {
   it('gets ping answers', async () => {
     await setup();
     await waitUntil(() => ctx.client.lastPongAt !== null);
+  });
+});
+
+describe('provider readiness', () => {
+  it('ends the run before listening when this Echo’s snapshot has no provider key', async () => {
+    await setup({
+      env: { OPENAI_API_KEY: 'test-key' },
+      overrides: { 'stt.provider': 'elevenlabs' },
+    });
+    // The fake services are always configured; the real ones read the snapshot.
+    ctx.services.isConfigured = () => false;
+    await connected();
+    await echo.runPipeline(syntheticSpeech());
+    await waitUntil(() => ctx.pipeline.lastTurn !== null);
+
+    expect(ctx.pipeline.lastTurn).toMatchObject({ outcome: 'error' });
+    expect(ctx.pipeline.lastTurn?.error).toContain('ElevenLabs is not configured');
+    // Never listened, never transcribed: the request failed at the wake word.
+    expect(ctx.services.calls.stt).toBe(0);
+    expect(echo.eventTypes()).toEqual(['run_start', 'error', 'run_end']);
+    expect(ctx.pipeline.state).toBe('idle');
+  });
+
+  it('logs the provider and model of both audio stages once per turn', async () => {
+    await setup({ env: { OPENAI_API_KEY: 'test-key' } });
+    ctx.settings.apply({ 'elevenlabs.apiKey': 'el-key' }, ctx.settings.version);
+    ctx.settings.apply({ 'tts.provider': 'elevenlabs' }, ctx.settings.version);
+    await connected();
+
+    const lines: string[] = [];
+    setLogLevel('info');
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    try {
+      await echo.runPipeline(syntheticSpeech());
+      await waitUntil(() => ctx.pipeline.lastTurn !== null);
+    } finally {
+      spy.mockRestore();
+      setLogLevel('silent');
+    }
+
+    const started = lines.find((line) => line.includes('turn started'));
+    expect(started).toContain('"provider":"openai","model":"gpt-transcribe"');
+    expect(started).toContain('"provider":"elevenlabs","model":"eleven_flash_v2_5"');
   });
 });
 

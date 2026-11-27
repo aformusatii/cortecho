@@ -37,12 +37,37 @@ describe('voice routes', () => {
           stt: { provider: 'openai', configured: false },
           thinking: { provider: 'openai', configured: false },
           tts: { provider: 'openai', configured: false },
+          echoOverrides: [],
         },
         lastTurn: null,
       });
       expect(body.tools).toContain('echo_test');
       expect(body.settingsVersion).toBe(0);
     }
+  });
+
+  it('allows media playback for "Listen here" and voice previews', async () => {
+    const app = setup();
+    const response = await app.request('/health');
+    expect(response.headers.get('content-security-policy')).toContain("media-src 'self' blob: data:;");
+  });
+
+  it('reports an Echo whose per-Echo override changes its audio stages', async () => {
+    ctx = createTestRuntime({
+      devices: [
+        { name: 'Kitchen', port: 26053, overrides: { 'tts.provider': 'elevenlabs' } },
+        { name: 'Study', port: 26054 },
+      ],
+    });
+    const app = createApp({ db: ctx.db, voice: ctx.runtime });
+    const body = await json<Health>(await app.request('/api/health'));
+    expect(body.providers.tts).toMatchObject({ provider: 'openai', configured: false });
+    expect(body.providers.echoOverrides).toHaveLength(1);
+    expect(body.providers.echoOverrides[0]).toMatchObject({
+      deviceName: 'Kitchen',
+      stt: { provider: 'openai' },
+      tts: { provider: 'elevenlabs', configured: false },
+    });
   });
 
   it('POST /api/ask runs the agent and records the turn', async () => {

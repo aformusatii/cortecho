@@ -1,4 +1,12 @@
-import type { DeviceSettingsDocument, DeviceStatus, Health, SayResponse, Turn } from '@cortecho/shared';
+import type {
+  DeviceSettingsDocument,
+  DeviceStatus,
+  Health,
+  SayResponse,
+  SettingsDocument,
+  Turn,
+  VoiceSampleRequest,
+} from '@cortecho/shared';
 
 /**
  * The production Cortecho REST API (SMOKE_CORTECHO_URL), typed fetch helpers
@@ -48,6 +56,22 @@ export class CortechoApi {
 
   health(): Promise<Health> {
     return this.request<Health>('/api/health');
+  }
+
+  /** The global settings document: version and hasKeys, never a secret value. */
+  settings(): Promise<SettingsDocument> {
+    return this.request<SettingsDocument>('/api/settings');
+  }
+
+  /** POST /api/settings/voice-sample: the draft voice as a WAV, no Echo involved. */
+  async voiceSample(input: VoiceSampleRequest): Promise<Buffer> {
+    const response = await fetch(`${this.baseUrl}/api/settings/voice-sample`, this.json(input));
+    if (!response.ok) throw new SmokeApiError(response.status, await response.text());
+    const type = response.headers.get('content-type') ?? '';
+    if (!type.startsWith('audio/')) {
+      throw new Error(`voice-sample returned ${type || 'no content type'}, expected audio`);
+    }
+    return Buffer.from(await response.arrayBuffer());
   }
 
   listDevices(): Promise<DeviceStatus[]> {

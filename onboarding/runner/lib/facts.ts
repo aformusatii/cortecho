@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { EchoMedia, EchoRun, EchoState, OpenAiCall } from './echo.ts';
-import { ECHO_URL, GATEWAY_URL, MEDIA_DIR, OPENAI_MODE, OUT } from './env.ts';
+import { ECHO_URL, ELEVENLABS_MODE, GATEWAY_URL, MEDIA_DIR, OPENAI_MODE, OUT } from './env.ts';
 import type { StepFact } from './steps.ts';
 
 export type ReconnectFact = { kind: string; ms: number };
@@ -10,6 +10,7 @@ export type RunFacts = {
   image: string;
   commit: string;
   openaiMode: string;
+  elevenlabsMode: string;
   number: string;
   totalSteps: number;
   startedAt: string;
@@ -50,6 +51,7 @@ function runFacts(): RunFacts {
     image: process.env.ONBOARDING_IMAGE ?? 'cortecho:onboarding',
     commit: process.env.ONBOARDING_COMMIT ?? 'unknown',
     openaiMode: OPENAI_MODE,
+    elevenlabsMode: ELEVENLABS_MODE,
     number: process.env.ONBOARDING_RUN_NUMBER ?? 'local',
     totalSteps: Number(process.env.ONBOARDING_TOTAL_STEPS ?? '12'),
     startedAt: process.env.ONBOARDING_STARTED_AT ?? new Date().toISOString(),
@@ -66,7 +68,8 @@ export async function collectFacts(
   extra: { reconnects?: ReconnectFact[] } = {},
 ): Promise<void> {
   const state = await fetchJson<EchoState>(`${ECHO_URL}/state`).catch(() => null);
-  const calls = await fetchJson<OpenAiCall[]>(`${GATEWAY_URL}/calls`).catch(() => []);
+  // Cumulative: a per-scenario reset would leave only the last spec in the summary.
+  const calls = await fetchJson<OpenAiCall[]>(`${GATEWAY_URL}/calls/all`).catch(() => []);
   const media = state ? await saveMedia(state.media) : [];
   const previous = readJson<Facts>(path.join(OUT, 'facts.json'));
   const next: Facts = {

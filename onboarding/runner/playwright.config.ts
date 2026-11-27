@@ -13,6 +13,12 @@ export default defineConfig({
   expect: { timeout: 30_000 },
   outputDir: process.env.ONBOARDING_OUTPUT_DIR ?? '/out/artifacts',
   reporter: [['blob'], ['list']],
+  // Chromium runs every scenario; WebKit (an iPhone) only the "Listen here"
+  // check, where iOS playback is the thing being proven.
+  projects: [
+    { name: 'chromium' },
+    { name: 'webkit', testMatch: /05-listen-here/, use: { ...devices['iPhone 15'] } },
+  ],
   use: {
     ...devices['Desktop Chrome'],
     baseURL,

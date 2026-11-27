@@ -5,6 +5,7 @@ import {
   type DoctorStatus,
   ELEVENLABS_STT_MODELS,
   ELEVENLABS_TTS_MODELS,
+  providerLabel,
   SETTING_DESCRIPTORS,
   type Settings,
 } from '@cortecho/shared';
@@ -15,6 +16,8 @@ import { isPrivateIpv4 } from '../features/devices/host.ts';
 import type { SettingsStore } from '../features/settings/settings-store.ts';
 import { parseSecretKey } from '../lib/secret-box.ts';
 import { effectivePolicy, type McpManager, reviewReason } from '../mcp/mcp-manager.ts';
+import { ELEVENLABS_BASE_URL } from '../pipeline/providers/elevenlabs.ts';
+import { missingProviders } from '../pipeline/services.ts';
 
 export type DoctorInput = {
   config: Config;
@@ -86,6 +89,7 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
     );
     checks.push(...elevenLabsModelChecks(now.settings));
   }
+  checks.push(...perEchoProviderChecks(settings, devices));
 
   checks.push(staleEnvironmentCheck(settings, env));
 
@@ -134,7 +138,9 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
 
   checks.push(await replyCheck(now.settings.network.replyBaseUrl, devices, production, fetchImpl));
   checks.push(await openAiCheck(settings, config, fetchImpl));
-  if (usesElevenLabs) checks.push(await elevenLabsCheck(settings, fetchImpl));
+  if (usesElevenLabs) {
+    checks.push(await elevenLabsCheck(settings, config.elevenlabs.baseUrl, fetchImpl));
+  }
   checks.push(...connectorChecks(config, input.mcp));
 
   if (input.localBaseUrl && input.sayText) {
@@ -146,6 +152,37 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
     generatedAt: new Date().toISOString(),
     checks,
   };
+}
+
+/**
+ * One Echo may pick an audio provider the global settings do not use. A key
+ * missing only for that Echo is a warning, not a global failure: the rest of
+ * the house keeps working, and the Tuning tab is where the owner changes it.
+ */
+function perEchoProviderChecks(settings: SettingsStore, devices: Device[]): DoctorCheck[] {
+  const globalMissing = new Set(missingProviders(settings.current().settings));
+  const stageNames = { stt: 'speech-to-text', tts: 'text-to-speech' } as const;
+  const checks: DoctorCheck[] = [];
+  for (const device of devices) {
+    const current = settings.forDevice(device.id).settings;
+    for (const provider of missingProviders(current)) {
+      if (globalMissing.has(provider)) continue; // already a global failure
+      const stages = [
+        current.stt.provider === provider ? stageNames.stt : null,
+        current.tts.provider === provider ? stageNames.tts : null,
+      ].filter((stage) => stage !== null);
+      if (stages.length === 0) continue; // thinking is OpenAI-only and global
+      checks.push(
+        check(
+          `${providerLabel(provider)} key (Echo "${device.name}")`,
+          'warn',
+          `This Echo uses ${providerLabel(provider)} for ${stages.join(' and ')}, but no key is stored.`,
+          'Add it under Settings → Providers, or set this Echo back to the global provider.',
+        ),
+      );
+    }
+  }
+  return checks;
 }
 
 function probeCheck(device: Device, result: EchoProbeResult): DoctorCheck {
@@ -334,8 +371,6 @@ async function openAiCheck(
   }
 }
 
-const ELEVENLABS_BASE = 'https://api.elevenlabs.io';
-
 function knownModelCheck(name: string, model: string, known: readonly string[]): DoctorCheck {
   if (known.includes(model)) return check(name, 'pass', `${model} is configured.`);
   return check(
@@ -363,11 +398,16 @@ function elevenLabsModelChecks(settings: Settings): DoctorCheck[] {
 }
 
 /** Listing one voice costs nothing and proves the ElevenLabs key works. */
-async function elevenLabsCheck(settings: SettingsStore, fetchImpl: typeof fetch): Promise<DoctorCheck> {
+async function elevenLabsCheck(
+  settings: SettingsStore,
+  baseUrl: string | undefined,
+  fetchImpl: typeof fetch,
+): Promise<DoctorCheck> {
   const key = settings.current().settings.elevenlabs.apiKey;
   if (!key) return check('ElevenLabs endpoint', 'skip', 'Skipped: no ElevenLabs key.');
+  const base = (baseUrl ?? ELEVENLABS_BASE_URL).replace(/\/+$/, '');
   try {
-    const response = await fetchImpl(`${ELEVENLABS_BASE}/v2/voices?page_size=1`, {
+    const response = await fetchImpl(`${base}/v2/voices?page_size=1`, {
       headers: { 'xi-api-key': key },
       signal: AbortSignal.timeout(5000),
     });
@@ -376,17 +416,17 @@ async function elevenLabsCheck(settings: SettingsStore, fetchImpl: typeof fetch)
       return check(
         'ElevenLabs endpoint',
         'fail',
-        `${ELEVENLABS_BASE} rejected the API key (HTTP ${response.status}).`,
+        `${base} rejected the API key (HTTP ${response.status}).`,
         'Enter a valid key under Settings → Providers.',
       );
     if (!response.ok)
-      return check('ElevenLabs endpoint', 'fail', `${ELEVENLABS_BASE} answered HTTP ${response.status}.`);
-    return check('ElevenLabs endpoint', 'pass', `${ELEVENLABS_BASE} accepted the key.`);
+      return check('ElevenLabs endpoint', 'fail', `${base} answered HTTP ${response.status}.`);
+    return check('ElevenLabs endpoint', 'pass', `${base} accepted the key.`);
   } catch (error) {
     return check(
       'ElevenLabs endpoint',
       'fail',
-      `Could not reach ${ELEVENLABS_BASE} (${error instanceof Error ? error.message : String(error)}).`,
+      `Could not reach ${base} (${error instanceof Error ? error.message : String(error)}).`,
       'Check the network from the container.',
     );
   }

@@ -125,10 +125,19 @@ describe('settings registry', () => {
     expect(SETTING_BY_KEY.get('agent.model')?.section).toBe('thinking');
   });
 
-  it('allows per-Echo overrides only for room-dependent knobs', () => {
+  it('allows per-Echo overrides for the audio of a turn, never for keys or thinking', () => {
     const perEcho = SETTING_DESCRIPTORS.filter((descriptor) => descriptor.perEcho).map((d) => d.key);
     expect(perEcho).toEqual(
       expect.arrayContaining([
+        // Each Echo can use its own providers and models for both audio stages.
+        'stt.provider',
+        'stt.model',
+        'stt.elevenlabsModel',
+        'tts.provider',
+        'tts.model',
+        'tts.elevenlabsModel',
+        'tts.elevenlabsStability',
+        // The rest of the per-turn audio.
         'tts.voice',
         'tts.speed',
         'stt.languages',
@@ -139,6 +148,9 @@ describe('settings registry', () => {
     );
     expect(perEcho).not.toContain('agent.model');
     expect(perEcho).not.toContain('openai.apiKey');
+    expect(perEcho).not.toContain('elevenlabs.apiKey');
+    expect(perEcho).not.toContain('openai.timeoutMs');
+    expect(perEcho).not.toContain('elevenlabs.timeoutMs');
     expect(perEcho).not.toContain('network.replyBaseUrl');
   });
 });
