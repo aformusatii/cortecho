@@ -26,6 +26,7 @@ has no authentication).
 | `HOST` | `0.0.0.0` | Interface the HTTP server binds to |
 | `PORT` | `3000` | HTTP port inside the container |
 | `DATABASE_PATH` | `./data/app.db` | SQLite file (relative to the repository root) |
+| `SYSTEM_PROMPT_FILE` | `./SystemPrompt.md` | Legacy household prompt imported once on a fresh database (relative to the repository root). Empty disables the import |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `silent` |
 | `REPLY_AUDIO_TTL_MS` | `120000` | How long a reply URL stays valid |
 | `DISCOVERY_EXTRA_TARGETS` | *(none)* | Comma-separated `host:port` additions to the network scan (an Echo on another subnet, tests). The scan only connects to private IPv4 addresses |
@@ -75,7 +76,8 @@ them from `cortecho.env` after the first successful start.
   still reads these variables for its own command line.
 - The provider keys (OpenAI, ElevenLabs) and every behaviour setting: see the
   table below (its **Env** column). `SystemPrompt.md` in the project root
-  becomes the household prompt.
+  becomes the household prompt; `SYSTEM_PROMPT_FILE` can point elsewhere or be
+  empty to skip it.
 - `TZ` is special: it sets the container clock on every start **and** seeds
   `assistant.timeZone` once. Changing `TZ` later changes the container clock
   but not the assistant's time zone; change that in **Settings**.

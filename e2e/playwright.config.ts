@@ -6,10 +6,14 @@ const PORT = 3200;
 // without either, and the tests never spend API credits.
 // DISCOVERY_EXTRA_TARGETS points the subnet scan at the two discoverable
 // FakeEchos; the keyed and hidden simulators stay out of it on purpose.
-const E2E_ENV = `DATABASE_PATH=./data/e2e.db PORT=${PORT} ECHO_HOST= OPENAI_API_KEY= CORTECHO_SECRET_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= PUBLIC_BASE_URL=http://localhost:${PORT} DISCOVERY_EXTRA_TARGETS=127.0.0.1:26101,127.0.0.1:26102`;
+// SYSTEM_PROMPT_FILE is empty so the one-time import never reads the owner's
+// private SystemPrompt.md, and TZ is fixed so the screenshots do not show the
+// machine's zone. e2e/global-setup.ts then writes the fictional demo prompt.
+const E2E_ENV = `TZ=Europe/Berlin SYSTEM_PROMPT_FILE= DATABASE_PATH=./data/e2e.db PORT=${PORT} ECHO_HOST= OPENAI_API_KEY= CORTECHO_SECRET_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= PUBLIC_BASE_URL=http://localhost:${PORT} DISCOVERY_EXTRA_TARGETS=127.0.0.1:26101,127.0.0.1:26102`;
 
 export default defineConfig({
   testDir: '.',
+  globalSetup: './global-setup.ts',
   // Tests share one database, so they run one at a time.
   fullyParallel: false,
   workers: 1,

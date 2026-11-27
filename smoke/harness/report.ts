@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { ToolCallRecord } from '@cortecho/shared';
 
 /**
  * Each run writes `smoke/.runs/<run id>/` (spec §8): `report.md` plus one file
@@ -19,6 +20,23 @@ export function newRunId(now = new Date()): string {
     `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
     `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
   return `smoke-${stamp}`;
+}
+
+/**
+ * A short, single-line result for a failure message. Arguments are never
+ * printed (they can carry personal data); a failed result is enough to explain
+ * why the tool did not run (for example, a connector needing re-authorization).
+ */
+export function resultExcerpt(result: string, max = 200): string {
+  const flat = result.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/** `name ok|FAILED|pending (ms)`, plus a short result excerpt when it failed. */
+export function toolCallLine(call: ToolCallRecord): string {
+  const status = call.pending ? 'pending' : call.ok ? 'ok' : 'FAILED';
+  const base = `${call.name} ${status} (${call.durationMs} ms)`;
+  return status === 'FAILED' ? `${base}: ${resultExcerpt(call.result)}` : base;
 }
 
 export class Report {
