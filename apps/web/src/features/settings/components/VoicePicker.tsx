@@ -4,6 +4,7 @@ import type { ElevenLabsVoice } from '@cortecho/shared';
 import { CheckIcon, ChevronDownIcon, PauseIcon, PlayIcon, SearchIcon } from 'lucide-react';
 import { Popover } from 'radix-ui';
 import * as React from 'react';
+import { blockedPlaybackMessage, useAudioPlayer } from '@/lib/use-audio-player.ts';
 
 /** The same-origin proxy for a voice sample: the API fetches the cached preview URL. */
 export function voicePreviewSrc(id: string): string {
@@ -39,17 +40,16 @@ export function VoicePicker({
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
   const [playing, setPlaying] = React.useState<string | null>(null);
-  const [previewError, setPreviewError] = React.useState(false);
-  const audioRef = React.useRef<HTMLAudioElement | null>(null);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const { unlock, play, stop: stopAudio } = useAudioPlayer();
   const inputRef = React.useRef<HTMLInputElement>(null);
   const anchorRef = React.useRef<HTMLDivElement>(null);
   const listId = `${id}-voices`;
 
   const stop = React.useCallback(() => {
-    audioRef.current?.pause();
-    audioRef.current = null;
+    stopAudio();
     setPlaying(null);
-  }, []);
+  }, [stopAudio]);
 
   React.useEffect(() => stop, [stop]);
   React.useEffect(() => {
@@ -69,31 +69,26 @@ export function VoicePicker({
     : voices;
 
   function toggleSample(voice: ElevenLabsVoice): void {
-    setPreviewError(false);
+    setPreviewError(null);
     if (playing === voice.id) {
       stop();
       return;
     }
     stop();
-    const audio = new Audio(voicePreviewSrc(voice.id));
-    audioRef.current = audio;
+    // Synchronous, still inside the click: iOS only lets this element play
+    // after the request if the gesture activated it first.
+    unlock();
     setPlaying(voice.id);
-    audio.onended = () => {
-      if (audioRef.current !== audio) return;
-      audioRef.current = null;
-      setPlaying(null);
-    };
-    audio.onerror = () => {
-      if (audioRef.current !== audio) return;
-      audioRef.current = null;
-      setPlaying(null);
-      setPreviewError(true);
-    };
-    void audio.play().catch(() => {
-      if (audioRef.current !== audio) return;
-      audioRef.current = null;
-      setPlaying(null);
-      setPreviewError(true);
+    const settle = () => setPlaying((current) => (current === voice.id ? null : current));
+    void play(voicePreviewSrc(voice.id), {
+      onEnded: settle,
+      onError: () => {
+        settle();
+        setPreviewError('Could not play this sample.');
+      },
+    }).catch((error: unknown) => {
+      settle();
+      setPreviewError(blockedPlaybackMessage(error) ?? 'Could not play this sample.');
     });
   }
 
@@ -176,7 +171,7 @@ export function VoicePicker({
           )}
           {previewError && (
             <p role="alert" className="mt-2 text-xs font-medium text-destructive">
-              Could not play this sample.
+              {previewError}
             </p>
           )}
         </div>

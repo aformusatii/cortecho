@@ -1,8 +1,9 @@
 import type { VoicePreview } from '@cortecho/shared';
 import { LoaderCircleIcon, PauseIcon, PlayIcon } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button.tsx';
+import { blockedPlaybackMessage, useAudioPlayer } from '@/lib/use-audio-player.ts';
 
 const SAMPLE_TEXT = 'Hi, this is how I will sound.';
 
@@ -13,32 +14,17 @@ const SAMPLE_TEXT = 'Hi, this is how I will sound.';
 export function VoiceSampleButton({ preview }: { preview: VoicePreview }) {
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const urlRef = useRef<string | null>(null);
-
-  const stop = () => {
-    audioRef.current?.pause();
-    audioRef.current = null;
-    setPlaying(false);
-    if (urlRef.current) {
-      URL.revokeObjectURL(urlRef.current);
-      urlRef.current = null;
-    }
-  };
-
-  useEffect(
-    () => () => {
-      audioRef.current?.pause();
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-    },
-    [],
-  );
+  const player = useAudioPlayer();
 
   async function listen() {
     if (playing) {
-      stop();
+      player.stop();
+      setPlaying(false);
       return;
     }
+    // Synchronous, still inside the click: iOS only lets this element play
+    // after the await if the gesture activated it first.
+    player.unlock();
     setLoading(true);
     try {
       const response = await fetch('/api/settings/voice-sample', {
@@ -50,24 +36,16 @@ export function VoiceSampleButton({ preview }: { preview: VoicePreview }) {
         const body = (await response.json().catch(() => null)) as {
           error?: { message?: string };
         } | null;
+        player.stop();
         toast.error(body?.error?.message ?? 'Could not play this voice.');
         return;
       }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      urlRef.current = url;
-      const audio = new Audio(url);
-      audioRef.current = audio;
       setPlaying(true);
-      audio.onended = stop;
-      audio.onerror = () => {
-        stop();
-        toast.error('Could not play this voice.');
-      };
-      await audio.play();
-    } catch {
-      stop();
-      toast.error('Could not play this voice.');
+      await player.play(await response.blob(), { onEnded: () => setPlaying(false) });
+    } catch (error) {
+      player.stop();
+      setPlaying(false);
+      toast.error(blockedPlaybackMessage(error) ?? 'Could not play this voice.');
     } finally {
       setLoading(false);
     }

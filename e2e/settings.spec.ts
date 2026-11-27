@@ -16,6 +16,12 @@ const IDLE_LABEL = 'Conversation idle time';
 const IDLE_FIELD = 'setting-assistant-sessionIdleMinutes';
 const SAVE = { name: 'Save', exact: true } as const;
 
+// A valid 10 ms silent WAV (8 kHz, mono, 16-bit) for the voice-sample route.
+const SILENT_WAV = Buffer.from(
+  'UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  'base64',
+);
+
 async function openSettings(page: import('@playwright/test').Page) {
   await page.goto('/settings');
   await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
@@ -193,6 +199,62 @@ test.describe('Settings page', () => {
     await expect(page.getByRole('button', { name: 'Listen to this voice' })).toBeVisible();
     await page.getByRole('button', { name: 'Listen to this voice' }).click();
     await expect(page.getByText(/ElevenLabs is not configured/).first()).toBeVisible();
+  });
+
+  test('starts the sample audio inside the click, for both providers', async ({ page }) => {
+    // The e2e server has no provider keys: answer the sample request ourselves
+    // with a valid 10 ms silent WAV (8 kHz, mono, 16-bit).
+    await page.route('**/api/settings/voice-sample', (route) =>
+      route.fulfill({ status: 200, contentType: 'audio/wav', body: SILENT_WAV }),
+    );
+    // Chromium keeps a late play() going; iOS Safari does not. Record for every
+    // play() whether a click was being dispatched at that moment.
+    await page.addInitScript(() => {
+      const plays: { src: string; inClick: boolean }[] = [];
+      Object.assign(window, { __plays: plays });
+      let inClick = false;
+      window.addEventListener(
+        'click',
+        () => {
+          inClick = true;
+          setTimeout(() => {
+            inClick = false;
+          }, 0);
+        },
+        true,
+      );
+      const play = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+        plays.push({ src: this.src, inClick });
+        return play.call(this);
+      };
+    });
+    const readPlays = () =>
+      page.evaluate(() => (window as unknown as { __plays: { src: string; inClick: boolean }[] }).__plays);
+
+    await page.goto('/settings');
+    await expect(page.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
+    await openSettingsSection(page, 'voice');
+    const provider = page.getByLabel('Text-to-speech provider', { exact: true });
+
+    for (const value of ['openai', 'elevenlabs']) {
+      await provider.selectOption(value);
+      await page.getByRole('button', { name: 'Listen to this voice' }).click();
+      await expect.poll(async () => (await readPlays()).length).toBeGreaterThanOrEqual(2);
+      const [first, second] = await readPlays();
+      // The unlock happened synchronously in the click, on the element the
+      // sample then reuses; the real sample itself plays after the fetch.
+      expect(first?.inClick).toBe(true);
+      expect(first?.src.startsWith('data:audio/wav')).toBe(true);
+      expect(second?.inClick).toBe(false);
+      expect(second?.src.startsWith('blob:')).toBe(true);
+
+      // The 10 ms clip is over: back to Listen before the next provider.
+      await expect(page.getByRole('button', { name: 'Listen to this voice' })).toBeVisible();
+      await page.evaluate(() => {
+        (window as unknown as { __plays: unknown[] }).__plays.length = 0;
+      });
+    }
   });
 
   test('the pipeline navigator scrolls to a stage', async ({ page }) => {
