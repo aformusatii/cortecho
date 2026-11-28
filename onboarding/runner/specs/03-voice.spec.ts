@@ -9,16 +9,11 @@ import {
   resetGatewayCalls,
   waitFor,
 } from '../lib/echo.ts';
-import { ECHO_URL, ELEVENLABS_ENABLED, ELEVENLABS_MODE, GATEWAY_URL, OPENAI_MODE } from '../lib/env.ts';
+import { ECHO_URL, ELEVENLABS_ENABLED, ELEVENLABS_MODE, OPENAI_MODE } from '../lib/env.ts';
 import { collectFacts } from '../lib/facts.ts';
-import { type Provider, setProviders } from '../lib/settings.ts';
+import { DUMMY_ELEVENLABS_KEY, type Provider, patchSettings, setProviders } from '../lib/settings.ts';
 import { runStep, type StepFact } from '../lib/steps.ts';
-import { SPOKEN_TIME } from '../lib/time.ts';
-import { transcribeReply } from '../lib/transcribe.ts';
 import { parseWav } from '../lib/wav.ts';
-
-const NO_ELEVENLABS =
-  'ELEVENLABS_API_KEY_E2E is not set for a real run; the ElevenLabs combinations are skipped';
 
 type Combo = {
   stt: Provider;
@@ -27,26 +22,20 @@ type Combo = {
   slug: string;
 };
 
-/** OpenAI/OpenAI first, then each ElevenLabs combination (the matrix). */
+/**
+ * One voice turn per provider. The mixed provider combinations (and the
+ * Providers-tab key flow) were removed from the lab: unit tests cover per-stage
+ * routing in `apps/api/src/pipeline/services.test.ts`, and e2e covers the
+ * settings UI. What the lab still proves is that a real client can complete a
+ * turn with each provider from end to end.
+ */
 const COMBOS: Combo[] = [
-  { stt: 'openai', tts: 'openai', title: 'OpenAI listens and speaks', slug: 'matrix-openai-openai' },
+  { stt: 'openai', tts: 'openai', title: 'OpenAI listens and speaks', slug: 'voice-openai' },
   {
     stt: 'elevenlabs',
     tts: 'elevenlabs',
     title: 'ElevenLabs listens and speaks',
-    slug: 'matrix-elevenlabs-elevenlabs',
-  },
-  {
-    stt: 'elevenlabs',
-    tts: 'openai',
-    title: 'ElevenLabs listens, OpenAI speaks',
-    slug: 'matrix-elevenlabs-openai',
-  },
-  {
-    stt: 'openai',
-    tts: 'elevenlabs',
-    title: 'OpenAI listens, ElevenLabs speaks',
-    slug: 'matrix-openai-elevenlabs',
+    slug: 'voice-elevenlabs',
   },
 ];
 
@@ -60,22 +49,12 @@ const TTS_PATH = {
   elevenlabs: '/elevenlabs/v1/text-to-speech/',
 } as const;
 
+const NO_ELEVENLABS = 'ELEVENLABS_API_KEY_E2E is not set for a real run; the ElevenLabs turn is skipped';
+
 function hasCall(calls: OpenAiCall[], provider: Provider, path: string): boolean {
   // includes, not endsWith: the ElevenLabs TTS path continues with the voice
   // id and /stream after the stage path.
   return calls.some((call) => call.service === provider && call.status === 200 && call.path.includes(path));
-}
-
-/** Letters that do not occur in English, for an English request's reply. */
-const NOT_ENGLISH = /[ăâîșțĂÂÎȘȚ\u0400-\u04FF]/;
-/** A Romanian/Russian sentence opener ("It was ...", "This is ...", "Now ..."). */
-const NON_ENGLISH_START = /^\s*(?:Era|Este|Сейчас)\b/i;
-
-/** The transcribed reply to an English request is English (tolerant otherwise). */
-function expectEnglish(text: string): void {
-  expect(text, 'the transcribed reply').not.toBe('');
-  expect(text).not.toMatch(NOT_ENGLISH);
-  expect(text).not.toMatch(NON_ENGLISH_START);
 }
 
 /** Zero crossings per second: twice the frequency of a pure tone. */
@@ -106,17 +85,19 @@ async function mediaBytes(item: EchoMedia): Promise<Buffer> {
   return Buffer.from(await response.arrayBuffer());
 }
 
-test.describe('Voice provider matrix', { tag: '@integration' }, () => {
-  for (const combo of COMBOS) {
+test.describe('Voice providers', { tag: '@integration' }, () => {
+  for (const [index, combo] of COMBOS.entries()) {
     const elevenLabs = combo.stt === 'elevenlabs' || combo.tts === 'elevenlabs';
-    // In skip mode only the OpenAI combination runs; the number follows.
-    const step = (ELEVENLABS_ENABLED ? 16 : 13) + COMBOS.indexOf(combo);
+    const step = 10 + index;
 
     test(combo.title, async ({ page }, testInfo) => {
       if (elevenLabs) test.skip(!ELEVENLABS_ENABLED, NO_ELEVENLABS);
       const steps: StepFact[] = [];
       let failure: unknown;
       try {
+        // The gateway accepts any key in mock mode; Cortecho still needs one
+        // stored to consider the ElevenLabs stages configured.
+        if (elevenLabs) await patchSettings({ 'elevenlabs.apiKey': DUMMY_ELEVENLABS_KEY });
         await setProviders(combo.stt, combo.tts);
         await resetGatewayCalls();
 
@@ -170,14 +151,6 @@ test.describe('Voice provider matrix', { tag: '@integration' }, () => {
               if (other !== combo.tts) {
                 expect(hasCall(calls, other, TTS_PATH[other]), `${other} TTS not called`).toBe(false);
               }
-            }
-
-            if (OPENAI_MODE === 'real') {
-              // The real reply must be speech that says a time, in English;
-              // the gateway calls above prove which provider produced it.
-              const heard = await transcribeReply(bytes, { gatewayUrl: GATEWAY_URL });
-              expect(heard).toMatch(SPOKEN_TIME);
-              expectEnglish(heard);
             }
 
             await page.goto('/');

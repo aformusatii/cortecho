@@ -1,0 +1,34 @@
+# The PR title becomes the squashed commit on main, and release.yml derives the
+# version from it. Required check `pr-title` on main.
+name: PR title
+
+on:
+  pull_request:
+    # `synchronize` matters: a required check must run on the latest commit.
+    types: [opened, reopened, edited, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  pr-title:
+    name: pr-title
+    runs-on: ubuntu-latest
+    steps:
+      # pull_request (not pull_request_target): the action only reads the title
+      # and the read-only token from a fork is enough. `!` marks a breaking
+      # change and needs no configuration.
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            docs
+            test
+            ci
+            chore
+            refactor
+            build

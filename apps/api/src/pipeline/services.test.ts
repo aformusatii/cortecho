@@ -77,6 +77,32 @@ describe('dispatching voice services', () => {
     expect(services.tts.sampleRate).toBe(24_000);
   });
 
+  it('routes a mixed snapshot stage by stage (OpenAI STT + ElevenLabs TTS and back)', async () => {
+    const { services, providers } = servicesWith();
+    const signal = new AbortController().signal;
+
+    // One snapshot selects one provider per audio stage, independently.
+    const openAiListen = settings({ 'stt.provider': 'openai', 'tts.provider': 'elevenlabs' });
+    await services.stt.transcribe(Buffer.alloc(2), 16_000, signal, openAiListen);
+    for await (const _chunk of services.tts.synthesize('hello', signal, openAiListen)) {
+      // drain
+    }
+    expect(providers.openai.transcribe).toHaveBeenCalledTimes(1);
+    expect(providers.elevenlabs.transcribe).not.toHaveBeenCalled();
+    expect(providers.elevenlabs.synthesize).toHaveBeenCalledTimes(1);
+    expect(providers.openai.synthesize).not.toHaveBeenCalled();
+
+    const elevenLabsListen = settings({ 'stt.provider': 'elevenlabs', 'tts.provider': 'openai' });
+    await services.stt.transcribe(Buffer.alloc(2), 16_000, signal, elevenLabsListen);
+    for await (const _chunk of services.tts.synthesize('hello', signal, elevenLabsListen)) {
+      // drain
+    }
+    expect(providers.elevenlabs.transcribe).toHaveBeenCalledTimes(1);
+    expect(providers.openai.transcribe).toHaveBeenCalledTimes(1);
+    expect(providers.openai.synthesize).toHaveBeenCalledTimes(1);
+    expect(providers.elevenlabs.synthesize).toHaveBeenCalledTimes(1);
+  });
+
   it('is configured only when OpenAI (thinking) and every selected provider have keys', () => {
     const both = { 'openai.apiKey': 'k', 'elevenlabs.apiKey': 'e' };
     expect(missingProviders(settings({ ...both, 'stt.provider': 'elevenlabs' }))).toEqual([]);

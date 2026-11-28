@@ -19,8 +19,7 @@ Run everything from the repository root.
 | `npm test` | Vitest: shared + API (unit + FakeEcho integration, no network) |
 | `npm run test:e2e` | Playwright against a production build, 3 viewports, two FakeEchos, no real Echo, no OpenAI key |
 | `npm run test:smoke` | Production smoke tests against the deployed Cortecho (see below) |
-| `npm run test:onboarding` | Docker onboarding E2E in the `cortecho-onboarding` Compose project (see below) |
-| `npm run test:integration` | The same Docker suite, including the provider matrix and "Listen here" scenarios (alias of `test:onboarding`) |
+| `npm run test:integration` | The Docker integration suite in the `cortecho-onboarding` Compose project: onboarding, restart, one OpenAI and one ElevenLabs turn, a follow-up, "Listen here" in WebKit, an announcement and the UI tour (see below) |
 | `npm run smoke:init` | Generate the simulated Echo's identity (`smoke/.env.smoke`, once) |
 | `npm run doctor` | Read-only configuration/link check (same as `cortecho doctor`) |
 | `npm run db:generate` | New migration after editing `apps/api/src/db/schema.ts` |

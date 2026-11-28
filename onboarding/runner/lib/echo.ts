@@ -75,8 +75,8 @@ export function echoJson<T>(path: string, init?: RequestInit): Promise<T> {
   return fetchJson<T>(`${ECHO_URL}${path}`, init);
 }
 
-export function gatewayJson<T>(path: string): Promise<T> {
-  return fetchJson<T>(`${GATEWAY_URL}${path}`);
+export function gatewayJson<T>(path: string, init?: RequestInit): Promise<T> {
+  return fetchJson<T>(`${GATEWAY_URL}${path}`, init);
 }
 
 /** Forgets the gateway's call list, so one provider combination is isolated. */

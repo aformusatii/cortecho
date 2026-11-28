@@ -54,6 +54,13 @@ type Call = {
 const calls: Call[] = [];
 /** Every provider call in the whole run, for summary.md (never reset). */
 const history: Call[] = [];
+/**
+ * The follow-up scenario, armed by the runner (`POST /scenario`): the next
+ * `/v1/responses` answers with a question and a `listen_for_reply` call, the
+ * one after it answers normally. Mock only: the test needs a deterministic
+ * model turn that keeps the microphone open.
+ */
+let followUpResponses = 0;
 
 createServer((req, res) => {
   const startedAt = Date.now();
@@ -109,6 +116,25 @@ async function handle(
   }
   if (method === 'POST' && path === '/calls/reset') {
     calls.length = 0;
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+  // The runner arms the one-shot follow-up scenario. Not provider traffic, so
+  // it never appears in /calls.
+  if (method === 'POST' && path === '/scenario') {
+    const body = await readBody(req);
+    let followUp = false;
+    try {
+      followUp = (JSON.parse(body) as { follow_up?: unknown }).follow_up === true;
+    } catch {
+      followUp = false;
+    }
+    followUpResponses = followUp ? 1 : 0;
+    sendJson(res, 200, { ok: true, follow_up: followUp });
+    return;
+  }
+  if (method === 'DELETE' && path === '/scenario') {
+    followUpResponses = 0;
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -219,7 +245,9 @@ async function mockOpenAi(
   if (path === '/v1/responses' && method === 'POST') {
     const body = await readBody(req);
     call.model = extractModel(body, req.headers['content-type'] ?? '');
-    sendResponses(res, call.model ?? 'gpt-mock');
+    const followUp = followUpResponses > 0;
+    if (followUp) followUpResponses -= 1;
+    sendResponses(res, call.model ?? 'gpt-mock', followUp);
     return;
   }
 
@@ -303,8 +331,10 @@ async function mockElevenLabs(
 }
 
 /** The events `openai.ts` and the Responses agent consume from the SDK stream. */
-function sendResponses(res: ServerResponse, model: string): void {
-  const text = "It's 14:05.";
+function sendResponses(res: ServerResponse, model: string, followUp = false): void {
+  // The follow-up scenario: a spoken question plus the tool call that keeps
+  // the Echo listening. The next call (the answer) uses the normal reply.
+  const text = followUp ? 'Do you want the time here, or in Chisinau?' : "It's 14:05.";
   const message = {
     id: 'msg_onboarding_mock',
     type: 'message',
@@ -312,13 +342,24 @@ function sendResponses(res: ServerResponse, model: string): void {
     role: 'assistant',
     content: [{ type: 'output_text', text, annotations: [] }],
   };
+  // The same shape the Responses API uses for a function call. The agent
+  // answers `listen_for_reply` itself and replays a function_call_output.
+  const listenCall = {
+    id: 'fc_onboarding_mock',
+    type: 'function_call',
+    status: 'completed',
+    call_id: 'call_onboarding_mock',
+    name: 'listen_for_reply',
+    arguments: '{"wait_seconds":5}',
+  };
+  const output = followUp ? [message, listenCall] : [message];
   const response = {
     id: 'resp_onboarding_mock',
     object: 'response',
     created_at: Math.floor(Date.now() / 1000),
     status: 'completed',
     model,
-    output: [message],
+    output,
     output_text: text,
     usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
   };
@@ -337,8 +378,8 @@ function sendResponses(res: ServerResponse, model: string): void {
     output_index: 0,
     item: { ...message, status: 'in_progress', content: [] },
   });
-  const first = "It's ";
-  const second = '14:05.';
+  const first = followUp ? 'Do you want the time here, ' : "It's ";
+  const second = followUp ? 'or in Chisinau?' : '14:05.';
   for (const delta of [first, second]) {
     sse(res, 'response.output_text.delta', {
       type: 'response.output_text.delta',
@@ -353,6 +394,18 @@ function sendResponses(res: ServerResponse, model: string): void {
     output_index: 0,
     item: message,
   });
+  if (followUp) {
+    sse(res, 'response.output_item.added', {
+      type: 'response.output_item.added',
+      output_index: 1,
+      item: { ...listenCall, status: 'in_progress', arguments: '' },
+    });
+    sse(res, 'response.output_item.done', {
+      type: 'response.output_item.done',
+      output_index: 1,
+      item: listenCall,
+    });
+  }
   sse(res, 'response.completed', { type: 'response.completed', response });
   res.end();
 }

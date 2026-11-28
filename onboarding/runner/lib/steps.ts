@@ -10,7 +10,13 @@ export type StepFact = {
   status: 'passed' | 'failed';
   durationMs: number;
   screenshot: string;
+  /** UI tour only: the page and viewport width the screenshot belongs to. */
+  page?: string;
+  width?: number;
 };
+
+/** Optional grouping for the proof's UI tour gallery. */
+export type StepMeta = { page?: string; width?: number };
 
 /**
  * Runs one user-visible step, attaches its screenshot to that step (so the
@@ -26,6 +32,7 @@ export async function runStep(
   slug: string,
   body: (capture: () => Promise<void>) => Promise<void>,
   steps: StepFact[],
+  meta: StepMeta = {},
 ): Promise<void> {
   mkdirSync(STEPS_DIR, { recursive: true });
   const number = String(n).padStart(2, '0');
@@ -66,6 +73,8 @@ export async function runStep(
       status,
       durationMs: Date.now() - startedAt,
       screenshot: relative,
+      ...(meta.page ? { page: meta.page } : {}),
+      ...(meta.width ? { width: meta.width } : {}),
     });
   }
 }

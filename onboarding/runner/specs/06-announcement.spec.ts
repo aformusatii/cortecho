@@ -8,13 +8,11 @@ import {
   resetGatewayCalls,
   waitFor,
 } from '../lib/echo.ts';
-import { ECHO_URL, ELEVENLABS_ENABLED, ELEVENLABS_MODE } from '../lib/env.ts';
+import { ECHO_URL } from '../lib/env.ts';
 import { collectFacts } from '../lib/facts.ts';
 import { setProviders } from '../lib/settings.ts';
 import { runStep, type StepFact } from '../lib/steps.ts';
 import { parseWav } from '../lib/wav.ts';
-
-const NO_ELEVENLABS = 'ELEVENLABS_API_KEY_E2E is not set for a real run; the ElevenLabs checks are skipped';
 
 async function announcementMedia(): Promise<EchoMedia> {
   const state = await waitFor<EchoState>(
@@ -31,27 +29,24 @@ async function announcementMedia(): Promise<EchoMedia> {
 }
 
 test.describe('Announcements', { tag: '@integration' }, () => {
-  test.skip(!ELEVENLABS_ENABLED, NO_ELEVENLABS);
-
-  test('POST /api/say reaches the Echo through ElevenLabs as a valid WAV', async ({
-    page,
-    request,
-  }, testInfo) => {
+  test('POST /api/say reaches the Echo as a valid WAV', async ({ page, request }, testInfo) => {
     const steps: StepFact[] = [];
     let failure: unknown;
     try {
-      await setProviders('openai', 'elevenlabs');
+      // OpenAI is configured in every mode; the announcement is not the place
+      // to also prove the ElevenLabs voice (that is the voice turn above).
+      await setProviders('openai', 'openai');
       await resetGatewayCalls();
 
       await runStep(
         testInfo,
         page,
-        24,
-        'Announce through ElevenLabs',
-        'announce-elevenlabs',
+        14,
+        'Announcement',
+        'announcement',
         async (capture) => {
           const response = await request.post('/api/say', {
-            data: { text: 'Integration suite announcement through ElevenLabs.' },
+            data: { text: 'Integration suite announcement.' },
           });
           expect(response.status(), await response.text()).toBe(200);
           const media = await announcementMedia();
@@ -66,9 +61,7 @@ test.describe('Announcements', { tag: '@integration' }, () => {
           expect(
             calls.some(
               (call) =>
-                call.service === 'elevenlabs' &&
-                call.status === 200 &&
-                call.path.includes('/v1/text-to-speech/'),
+                call.service === 'openai' && call.status === 200 && call.path.includes('/v1/audio/speech'),
             ),
           ).toBe(true);
           await page.goto('/');
@@ -78,15 +71,11 @@ test.describe('Announcements', { tag: '@integration' }, () => {
       );
     } catch (error) {
       failure = error;
-    } finally {
-      // Leave the throwaway stack on the default providers.
-      await setProviders('openai', 'openai').catch(() => {});
     }
 
     await collectFacts(steps).catch((error) => {
       failure ??= error;
     });
     if (failure) throw failure;
-    testInfo.annotations.push({ type: 'providers', description: `elevenlabs=${ELEVENLABS_MODE}` });
   });
 });

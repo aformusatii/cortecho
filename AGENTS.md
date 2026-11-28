@@ -29,8 +29,7 @@ Run everything from the repository root.
 | `npm test` | Vitest: shared + API (unit + FakeEcho integration, no network) |
 | `npm run test:e2e` | Playwright against a production build, 3 viewports (two FakeEchos, no real Echo, no OpenAI key) |
 | `npm run test:smoke` | **Production smoke tests**: a simulated Echo ("Test Echo") against the *deployed* Cortecho, real OpenAI. Never in CI; needs `smoke/.env.smoke`, the deployment and money. **Ask the owner first** (see Smoke tests below) |
-| `npm run test:onboarding` | **Docker onboarding E2E**: a fresh install of the shipped image, the real /24 scan and voice turn, all inside the `cortecho-onboarding` Compose project. Mock OpenAI by default; `OPENAI_MODE=real` needs `OPENAI_API_KEY_E2E` |
-| `npm run test:integration` | The same Docker suite as an integration layer: provider matrix, "Listen here" (Chromium + WebKit) and an announcement. ElevenLabs runs in mock mode, in real mode with `ELEVENLABS_API_KEY_E2E`, or skips with a reason |
+| `npm run test:integration` | The Docker integration suite: a fresh install of the shipped image, the real /24 scan, one OpenAI turn, one ElevenLabs turn, one follow-up, "Listen here" in WebKit, one announcement and the UI tour. Mock AI by default; `OPENAI_MODE=real` needs `OPENAI_API_KEY_E2E`, ElevenLabs then runs in real mode with `ELEVENLABS_API_KEY_E2E` or skips with a reason |
 | `npm run smoke:init` | Generates the simulated Echo's identity and writes `smoke/.env.smoke` (once) |
 | `npm run doctor` | Read-only configuration/link diagnostics |
 | `npm run db:generate` | New migration after editing `apps/api/src/db/schema.ts` |

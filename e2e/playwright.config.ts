@@ -1,6 +1,16 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
 const PORT = 3200;
+// Traces and other test output land in the repo root, never next to this file.
+// `npm run test:e2e` runs each project in its own invocation (see the scripts
+// in package.json) and sets E2E_OUTPUT_DIR per project, so a later project
+// cannot delete an earlier project's traces.
+const CONFIG_DIR = path.dirname(fileURLToPath(import.meta.url));
+const OUTPUT_DIR = process.env.E2E_OUTPUT_DIR
+  ? path.resolve(CONFIG_DIR, '..', process.env.E2E_OUTPUT_DIR)
+  : path.resolve(CONFIG_DIR, '..', 'test-results');
 // A separate, fresh database so e2e tests never touch the development data.
 // No ECHO_HOST (ESPHome client off) and no OpenAI key: the UI must work
 // without either, and the tests never spend API credits.
@@ -17,11 +27,18 @@ const E2E_ENV = `TZ=Europe/Berlin SYSTEM_PROMPT_FILE= DATABASE_PATH=./data/e2e.d
 export default defineConfig({
   testDir: '.',
   globalSetup: './global-setup.ts',
+  // Traces and artifacts per project (see OUTPUT_DIR above). Playwright resolves
+  // a relative outputDir against this config file's directory, so the old
+  // default silently wrote to e2e/test-results while CI uploaded test-results/.
+  outputDir: OUTPUT_DIR,
   // Tests share one database, so they run one at a time.
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
+  // A test that only passed on retry is a flake: fail the CI job so it stays
+  // visible instead of hiding behind retries.
+  failOnFlakyTests: !!process.env.CI,
   reporter: [['list']],
   use: {
     baseURL: `http://localhost:${PORT}`,
@@ -62,7 +79,11 @@ export default defineConfig({
       stderr: 'pipe',
     },
     {
-      command: `npm run build && rm -f data/e2e.db* && node e2e/wait-for-ports.ts 26101 26102 26103 26104 && ${E2E_ENV} NODE_ENV=production node apps/api/src/server.ts`,
+      // `npm run test:e2e` builds once, then runs each project in its own
+      // invocation. E2E_SKIP_BUILD keeps the later two from rebuilding.
+      // Each invocation also starts this server against a fresh database, so
+      // the three projects (and their writes) never share state.
+      command: `${process.env.E2E_SKIP_BUILD ? '' : 'npm run build && '}rm -f data/e2e.db* && node e2e/wait-for-ports.ts 26101 26102 26103 26104 && ${E2E_ENV} NODE_ENV=production node apps/api/src/server.ts`,
       cwd: '..',
       url: `http://localhost:${PORT}/api/health`,
       reuseExistingServer: false,

@@ -3,7 +3,7 @@ import { ELEVENLABS_ENABLED, ELEVENLABS_MODE } from '../lib/env.ts';
 import { collectFacts } from '../lib/facts.ts';
 import { runStep, type StepFact } from '../lib/steps.ts';
 
-const NO_ELEVENLABS = 'ELEVENLABS_API_KEY_E2E is not set for a real run; the ElevenLabs checks are skipped';
+const NO_ELEVENLABS = 'ELEVENLABS_API_KEY_E2E is not set for a real run; the ElevenLabs check is skipped';
 
 type PlayRecord = { blob: boolean; playing: boolean; ended: boolean; time: number };
 
@@ -82,14 +82,15 @@ async function listenAndWait(page: Page, provider: 'openai' | 'elevenlabs'): Pro
     .toBe(true);
 }
 
+// WebKit is the iPhone regression guard: the narrow viewport has its own
+// "Listen here" playback path, and a blob that never plays is invisible to
+// Chromium. The rest of the UI tour runs in Chromium.
 test.describe('Listen here', { tag: '@integration' }, () => {
   test.skip(!ELEVENLABS_ENABLED, NO_ELEVENLABS);
 
-  test('plays a real sample in this browser, for both providers', async ({ page }, testInfo) => {
+  test('plays a real ElevenLabs sample in WebKit', async ({ page }, testInfo) => {
     const steps: StepFact[] = [];
     let failure: unknown;
-    // The Chromium project runs this first; WebKit (iPhone) gets its own numbers.
-    const base = testInfo.project.name === 'webkit' ? 22 : 20;
     try {
       await recordPlayback(page);
       await page.goto('/settings');
@@ -98,27 +99,11 @@ test.describe('Listen here', { tag: '@integration' }, () => {
       await runStep(
         testInfo,
         page,
-        base,
+        13,
         'Listen here (ElevenLabs)',
-        `${testInfo.project.name}-listen-elevenlabs`,
+        'webkit-listen-elevenlabs',
         async (capture) => {
           await listenAndWait(page, 'elevenlabs');
-          await capture();
-        },
-        steps,
-      );
-
-      await runStep(
-        testInfo,
-        page,
-        base + 1,
-        'Listen here (OpenAI)',
-        `${testInfo.project.name}-listen-openai`,
-        async (capture) => {
-          // Reload discards the unsaved provider draft; select explicitly again.
-          await page.goto('/settings');
-          await openSection(page, 'voice');
-          await listenAndWait(page, 'openai');
           await capture();
         },
         steps,

@@ -15,6 +15,12 @@ export type EchoHostOptions = {
   friendlyName: string;
   macAddress: string;
   hassmicVersion: string;
+  /**
+   * Mic audio of a follow-up run (the answer to a question the assistant
+   * asked). Defaults to silence; the lab passes the spoken fixture so the
+   * follow-up scenario has something to hear.
+   */
+  followUpAudio?: Buffer;
 };
 
 export type MediaRecord = {
@@ -166,7 +172,10 @@ export class EchoHost {
       serverInfo: `hassmic ${this.options.hassmicVersion}`,
       wakeSoundDbfs: this.options.wakeDb,
       roomNoiseDbfs: this.options.roomDb,
-      followUpAudio: Buffer.alloc(0),
+      // The follow-up scenario answers a question: give it the spoken fixture.
+      // The first ~2 s (wake sound + guard) are skipped by the app's VAD, so the
+      // fixture is repeated once to leave enough speech after the guard.
+      followUpAudio: this.options.followUpAudio ?? Buffer.alloc(0),
       fetchAudio: (url) => this.fetchMedia(url),
     });
     echo.on('event', (event) => this.eventLog.push({ type: event.type, at: Date.now() }));

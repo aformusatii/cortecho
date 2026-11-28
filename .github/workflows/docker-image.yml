@@ -1,47 +1,70 @@
-# Builds the production Docker image and pushes it to GitHub Container
-# Registry (ghcr.io), which is free and needs no extra secrets: the job logs
-# in with the GITHUB_TOKEN that every workflow run gets automatically.
+# Builds the production image ONCE per pull request and tests that exact
+# digest. Nothing is rebuilt after testing: merging re-tags the same digest as
+# :main (release.yml), and a release adds :X.Y.Z/:X.Y/:latest to it.
 #
-#   push to main      → ghcr.io/<owner>/<repo>:latest           + :sha-<short>
-#   push tag v1.2.3   → :1.2.3, :1.2                           + :sha-<short>
-#   pull request      → build only (proves the Dockerfile still works), no push
+#   same-repo PR  → ghcr.io/<owner>/<repo>:pr-<N> :sha-<commit> :tree-<tree>
+#                   (provenance mode=max, SBOM and a build attestation)
+#   fork PR       → build only, loaded locally (a fork token cannot push)
 #
-# After a tag's image is pushed, the `release` job publishes a GitHub Release
-# for that tag. Plain pushes to main do not create releases: a release is a
-# deliberate decision, and the tag is how you make it (`git tag v1.2.3 && git
-# push origin v1.2.3`).
+# The job names `image` and `integration` are required checks on main.
 name: Docker image
 
 on:
-  push:
-    branches: [main]
-    tags: ['v*.*.*']
   pull_request:
     branches: [main]
-  workflow_dispatch:
 
-# A newer push to the same branch makes an older, still-running build pointless.
+# A newer push to the same PR makes an older, still-running build pointless.
 concurrency:
-  group: docker-${{ github.ref }}
+  group: image-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  # Push and pull the PR image.
+  packages: write
+  # Keyless provenance attestation (same-repo PRs only; forks are skipped).
+  attestations: write
+  id-token: write
+
 jobs:
-  build-and-push:
+  image:
+    name: image
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      # Required to push to ghcr.io with GITHUB_TOKEN.
-      packages: write
+    timeout-minutes: 20
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      tree: ${{ steps.tree.outputs.tree }}
+      image: ${{ steps.image.outputs.name }}
+      same_repo: ${{ steps.repo.outputs.same }}
 
     steps:
+      # The PR head, not the merge ref: the tree hash of this commit is what
+      # the squash merge of an up-to-date branch produces.
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Decide whether this PR can push to ghcr
+        id: repo
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [[ "$HEAD_REPO" == "$GITHUB_REPOSITORY" ]]; then
+            echo "same=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "same=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute the git tree hash
+        id: tree
+        run: echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
+        if: steps.repo.outputs.same == 'true'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -49,8 +72,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # ghcr.io image names must be lowercase, and GitHub expressions have no
-      # lower() function, so the shell lowercases "owner/repo". The image name
-      # then always follows the repository name, also after a rename.
+      # lower() function, so the shell lowercases "owner/repo".
       - name: Compute image name
         id: image
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
@@ -61,62 +83,158 @@ jobs:
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha
-            type=ref,event=pr
+            type=raw,value=pr-${{ github.event.pull_request.number }}
+            type=raw,value=sha-${{ github.event.pull_request.head.sha }}
+            type=raw,value=tree-${{ steps.tree.outputs.tree }}
+          labels: |
+            io.github.cortecho.pr=${{ github.event.pull_request.number }}
+            io.github.cortecho.tree=${{ steps.tree.outputs.tree }}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
+          push: ${{ steps.repo.outputs.same == 'true' }}
+          load: ${{ steps.repo.outputs.same != 'true' }}
+          tags: ${{ steps.repo.outputs.same == 'true' && steps.meta.outputs.tags || format('cortecho:pr-{0}', github.event.pull_request.number) }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Reuse layers (above all the `npm ci` layer) between runs.
+          # The docker exporter cannot carry attestations; forks build only.
+          provenance: ${{ steps.repo.outputs.same == 'true' && 'mode=max' || 'false' }}
+          sbom: ${{ steps.repo.outputs.same == 'true' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  release:
-    # Only for version tags, and only after the image for that tag is pushed,
-    # so a release never points at an image that does not exist.
-    needs: build-and-push
-    if: startsWith(github.ref, 'refs/tags/v')
+      - name: Print the image digest
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "Image: $IMAGE"
+          if [[ -n "$DIGEST" ]]; then
+            echo "Digest: $DIGEST"
+            echo "Pull: $IMAGE@$DIGEST"
+          else
+            echo "Digest: (none: fork PR, build-only)"
+          fi
+
+      # Verifiable with: gh attestation verify oci://<image>@<digest> -R <repo>
+      - name: Attest the pushed image
+        if: steps.repo.outputs.same == 'true'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  integration:
+    name: integration
+    needs: image
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
-      # Required to create a release with GITHUB_TOKEN.
-      contents: write
+      contents: read
+      packages: read
 
     steps:
-      # The gh CLI is preinstalled on GitHub-hosted runners, so no third-party
-      # release action is needed. --generate-notes lists the merged PRs and
-      # commits since the previous tag; a tag with a hyphen (v1.2.0-rc.1) is
-      # marked as a pre-release.
-      - name: Create GitHub Release
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        if: needs.image.outputs.same_repo == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the fork image locally
+        if: needs.image.outputs.same_repo != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          provenance: false
+          sbom: false
+          tags: cortecho:pr-${{ github.event.pull_request.number }}
+          cache-from: type=gha
+
+      - name: Resolve the tested image
+        id: ref
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          SAME: ${{ needs.image.outputs.same_repo }}
+          IMAGE: ${{ needs.image.outputs.image }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
-          image="ghcr.io/${GH_REPO,,}"
-          version="${TAG#v}"
-          prerelease=""
-          if [[ "$TAG" == *-* ]]; then prerelease="--prerelease"; fi
+          if [[ "$SAME" == "true" ]]; then
+            ref="${IMAGE}@${DIGEST}"
+            docker pull "$ref"
+            # The tag must resolve to the digest the image job pushed: the lab
+            # tests that digest or nothing.
+            if ! docker inspect --format '{{json .RepoDigests}}' "$ref" | grep -q "${DIGEST#sha256:}"; then
+              echo "::error::$ref does not resolve to $DIGEST"
+              exit 1
+            fi
+            echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          else
+            ref="cortecho:pr-${PR}"
+            echo "digest=local:${ref}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "Testing image: $ref"
 
-          cat > notes.md <<NOTES
-          ## Docker image
+      - name: Run the integration lab against that image
+        env:
+          OPENAI_MODE: mock
+          CORTECHO_IMAGE: ${{ steps.ref.outputs.ref }}
+        run: bash onboarding/scripts/run.sh
 
-          \`\`\`bash
-          docker pull ${image}:${version}
-          docker run -d -p 3000:3000 -v "\$PWD/data:/app/data" ${image}:${version}
-          \`\`\`
+      - name: Generate the image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.ref.outputs.ref }}
+          format: spdx-json
+          output-file: onboarding/out/sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
 
-          NOTES
+      - name: Write the evidence summary and archive the report
+        if: always()
+        env:
+          TREE: ${{ needs.image.outputs.tree }}
+          DIGEST: ${{ steps.ref.outputs.digest }}
+          IMAGE: ${{ steps.ref.outputs.ref }}
+        run: |
+          mkdir -p onboarding/out
+          node onboarding/scripts/artifact.ts --out onboarding/out --image "$IMAGE" --digest "$DIGEST" --tree "$TREE"
+          if [[ -d onboarding/out/report ]]; then
+            (cd onboarding/out && zip -qr integration-report.zip report)
+          fi
 
-          gh release create "$TAG" \
-            --verify-tag \
-            --title "$TAG" \
-            --notes-file notes.md \
-            --generate-notes \
-            $prerelease
+      - name: Upload the evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evidence-tree-${{ needs.image.outputs.tree }}
+          path: |
+            onboarding/out/digest.txt
+            onboarding/out/evidence.html
+            onboarding/out/integration-report.zip
+            onboarding/out/results.json
+            onboarding/out/junit.xml
+            onboarding/out/sbom.spdx.json
+            onboarding/out/summary.json
+          retention-days: 30
+          if-no-files-found: warn

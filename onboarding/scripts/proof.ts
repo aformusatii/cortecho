@@ -24,6 +24,8 @@ type StepFact = {
   status: 'passed' | 'failed';
   durationMs: number;
   screenshot: string;
+  page?: string;
+  width?: number;
 };
 
 type PlayedFact = {
@@ -75,7 +77,11 @@ const facts = readJson<Facts>(path.join(OUT, 'facts.json')) ?? {};
 const results = readJson<Results>(path.join(OUT, 'results.json')) ?? {};
 const calls = readJson<Call[]>(path.join(OUT, 'openai-calls.json')) ?? [];
 const steps = [...(facts.steps ?? [])].sort((a, b) => a.n - b.n);
-const total = facts.run?.totalSteps ?? 12;
+// The UI tour screenshots are grouped by page and width; every other step is
+// one user-visible action with one screenshot.
+const tourSteps = steps.filter((step) => step.width !== undefined);
+const runSteps = steps.filter((step) => step.width === undefined);
+const total = facts.run?.totalSteps ?? 28;
 const passed = steps.filter((step) => step.status === 'passed').length;
 const resultsFailed = (results.stats?.unexpected ?? failedTests(results)) > 0;
 const ok = !resultsFailed && passed === total && steps.length === total;
@@ -86,7 +92,7 @@ const totalMs = Math.max(
 
 const videos = collectVideos();
 const html = buildHtml(true, videos);
-writeFileSync(path.join(PROOF, 'onboarding-proof.html'), html);
+writeFileSync(path.join(OUT, 'evidence.html'), html);
 
 const noVideoHtml = buildHtml(false, videos);
 await render(noVideoHtml);
@@ -95,7 +101,7 @@ function buildHtml(
   withVideos: boolean,
   videoFiles: { setup: string | null; restart: string | null },
 ): string {
-  const headline = `Onboarding E2E ${ok ? 'passed' : 'failed'} — ${passed}/${total} steps`;
+  const headline = `Integration suite ${ok ? 'passed' : 'failed'} — ${passed}/${total} steps`;
   const openAiMode = facts.run?.openaiMode ?? 'unknown';
   const startedAt = facts.run?.startedAt ? new Date(facts.run.startedAt) : new Date();
   const totalBytes = [videoFiles.setup, videoFiles.restart]
@@ -130,6 +136,9 @@ function buildHtml(
   ul { margin:8px 0 0; padding-left:20px; }
   li { margin:4px 0; }
   table { width:100%; border-collapse:collapse; font-size:13px; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  table.tour td { width:46%; }
+  table.tour th[scope=row] { width:8rem; vertical-align:middle; }
+  table.tour img { margin:0; }
   th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
   th { background:#f1f5f9; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
   tr:last-child td { border-bottom:0; }
@@ -168,8 +177,10 @@ function buildHtml(
 
   <h2>Steps</h2>
   <div class="steps">
-    ${steps.map((step) => stepCard(step)).join('\n')}
+    ${runSteps.map((step) => stepCard(step)).join('\n')}
   </div>
+
+  ${tourSteps.length > 0 ? `<h2>UI tour</h2>\n  ${tourGallery()}` : ''}
 
   <h2>What the Echo saw</h2>
   <ul>
@@ -198,14 +209,47 @@ function buildHtml(
 }
 
 function stepCard(step: StepFact): string {
-  const shot = path.join(STEP_DIR, path.basename(step.screenshot));
-  const image = existsSync(shot)
-    ? `<img class="shot" src="data:image/png;base64,${base64(shot)}" alt="${escapeHtml(`${step.n} ${step.title}`)}">`
-    : '<div class="empty">Screenshot missing</div>';
   return `<article class="card">
     <h3>${step.status === 'passed' ? '✅' : '❌'} ${String(step.n).padStart(2, '0')} · ${escapeHtml(step.title)} <small>${formatSeconds(step.durationMs)}</small></h3>
-    ${image}
+    ${shotImage(step)}
   </article>`;
+}
+
+/** The UI tour, one row per page and one column per required width. */
+function tourGallery(): string {
+  const byPage = new Map<string, StepFact[]>();
+  for (const step of tourSteps) {
+    const key = step.page ?? 'Other';
+    const list = byPage.get(key) ?? [];
+    list.push(step);
+    byPage.set(key, list);
+  }
+  const widths = [...new Set(tourSteps.map((step) => step.width ?? 0))].sort((a, b) => b - a);
+  const head = widths.map((width) => `<th>${width}px</th>`).join('');
+  const rows = [...byPage.entries()]
+    .map(([label, list]) => {
+      const cells = widths
+        .map((width) => {
+          const step = list.find((candidate) => candidate.width === width);
+          return `<td>${step ? shotImage(step) : '<div class="empty">Screenshot missing</div>'}</td>`;
+        })
+        .join('');
+      return `<tr><th scope="row">${escapeHtml(label)}</th>${cells}</tr>`;
+    })
+    .join('\n    ');
+  return `<table class="tour">
+    <thead><tr><th>Page</th>${head}</tr></thead>
+    <tbody>
+    ${rows}
+    </tbody>
+  </table>`;
+}
+
+function shotImage(step: StepFact): string {
+  const shot = path.join(STEP_DIR, path.basename(step.screenshot));
+  return existsSync(shot)
+    ? `<img class="shot" src="data:image/png;base64,${base64(shot)}" alt="${escapeHtml(`${step.n} ${step.title}`)}">`
+    : '<div class="empty">Screenshot missing</div>';
 }
 
 function fact(label: string, value: string): string {

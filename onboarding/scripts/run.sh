@@ -48,15 +48,24 @@ export ECHO_FRIENDLY_NAME="${ECHO_FRIENDLY_NAME:-Echo Dot 2 5c0e11}"
 export ONBOARDING_IMAGE="$CORTECHO_IMAGE"
 export ONBOARDING_COMMIT="${GITHUB_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 export ONBOARDING_RUN_NUMBER="${GITHUB_RUN_NUMBER:-local-$(date +%s)}"
-# 12 onboarding/restart steps; with ElevenLabs: 3 providers + 4 combinations +
-# 4 "Listen here" (two providers in Chromium and WebKit) + 1 announcement.
+# 8 onboarding + 1 restart + 2 provider turns + 1 follow-up + 1 Listen here +
+# 1 announcement + 14 UI-tour screenshots. Without ElevenLabs, the two
+# ElevenLabs steps (the turn and Listen here) are skipped.
 if [[ "$ELEVENLABS_MODE" == "skip" ]]; then
-  ONBOARDING_TOTAL_STEPS=13
+  ONBOARDING_TOTAL_STEPS=26
 else
-  ONBOARDING_TOTAL_STEPS=24
+  ONBOARDING_TOTAL_STEPS=28
+fi
+# The follow-up question needs the deterministic mock model to call
+# listen_for_reply, so a real-AI run skips that step (number 12).
+if [[ "$OPENAI_MODE" == "real" ]]; then
+  ONBOARDING_TOTAL_STEPS=$((ONBOARDING_TOTAL_STEPS - 1))
 fi
 export ONBOARDING_TOTAL_STEPS
 export ONBOARDING_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+echo "Testing image: $CORTECHO_IMAGE"
+echo "OpenAI: $OPENAI_MODE; ElevenLabs: $ELEVENLABS_MODE; expected steps: $ONBOARDING_TOTAL_STEPS"
 
 cleanup() {
   set +e
@@ -112,7 +121,8 @@ set +e
 "${COMPOSE[@]}" exec -T \
   -e PLAYWRIGHT_HTML_OUTPUT_DIR=/out/report \
   -e PLAYWRIGHT_JSON_OUTPUT_FILE=/out/results.json \
-  runner npx playwright merge-reports --reporter=html,json /out/blobs
+  -e PLAYWRIGHT_JUNIT_OUTPUT_FILE=/out/junit.xml \
+  runner npx playwright merge-reports --reporter=html,json,junit /out/blobs
 merge_status=$?
 # Belt and braces: the phase's exit code should already be non-zero, but the
 # merged report is the record CI and the owner read, so fail on it directly.

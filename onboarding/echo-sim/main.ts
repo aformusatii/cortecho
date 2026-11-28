@@ -15,6 +15,11 @@ function number(name: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+const fixturePcm = loadFixture(FIXTURE, {
+  speechDb: number('ECHO_SPEECH_DBFS', -26),
+  roomDb: number('ECHO_ROOM_DBFS', -60),
+});
+
 const host = new EchoHost({
   bind: process.env.ECHO_BIND ?? '0.0.0.0',
   port: int('ECHO_PORT', 26053),
@@ -24,11 +29,9 @@ const host = new EchoHost({
   friendlyName: process.env.ECHO_FRIENDLY_NAME ?? 'Echo Dot 2 5c0e11',
   macAddress: process.env.ECHO_MAC ?? '02:42:0a:e7:2f:15',
   hassmicVersion: HASSMIC_VERSION,
-});
-
-const fixturePcm = loadFixture(FIXTURE, {
-  speechDb: number('ECHO_SPEECH_DBFS', -26),
-  roomDb: number('ECHO_ROOM_DBFS', -60),
+  // A follow-up run opens with the wake sound and the app's 2 s guard, so the
+  // fixture is repeated to leave speech after the guard.
+  followUpAudio: Buffer.concat([fixturePcm, fixturePcm]),
 });
 
 await host.start();
