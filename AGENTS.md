@@ -226,6 +226,11 @@ docs/                     user and contributor documentation
   later turn with the same arguments may run it.
 - **Definition pinning.** A changed tool hash is `off` until the owner approves
   it; a tool added after the first sync starts `off` and is marked new.
+- **Server metadata has one sync path.** A handshake (connect, reconnect,
+  manual Refresh, the hourly re-sync) refreshes instructions, protocol version,
+  server info, capabilities and the tool list together; `list_changed` is
+  tools-only. `status_detail` is written from that snapshot, never from link
+  state.
 - **`stdio` is environment-only.** Do not add a UI path that runs commands.
 - **The URL policy is checked on save and on every connect** (HTTPS, LAN-only
   plain HTTP, no link-local/metadata, no Echo ports, DNS resolved).

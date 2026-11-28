@@ -1,4 +1,9 @@
-import { buildSettings, DEFAULT_SETTINGS, type Settings } from '@cortecho/shared';
+import {
+  buildSettings,
+  DEFAULT_SETTINGS,
+  MAX_SERVER_INSTRUCTIONS_CHARS,
+  type Settings,
+} from '@cortecho/shared';
 import { describe, expect, it } from 'vitest';
 import {
   BASE_RULES,
@@ -117,6 +122,24 @@ describe('buildPromptLayers', () => {
     expect(withConfirm).not.toContain('Before any other action');
 
     expect(buildInstructions({ settings: settings() })).not.toContain(CONNECTOR_DATA_RULE);
+  });
+
+  it('keeps a 450-character connector note whole and cuts a longer one at the shared cap', () => {
+    const short = 'm'.repeat(450);
+    const long = 'l'.repeat(1200);
+    const prompt = (instructions: string) =>
+      buildInstructions({
+        settings: settings(),
+        connectors: [{ slug: 'runner', name: 'Runner', description: '', available: true, instructions }],
+      });
+
+    const whole = prompt(short);
+    expect(whole).toContain(short);
+    expect(whole).not.toContain('…');
+
+    const cut = prompt(long);
+    expect(cut).toContain(`${'l'.repeat(MAX_SERVER_INSTRUCTIONS_CHARS)}`);
+    expect(cut).not.toContain('l'.repeat(MAX_SERVER_INSTRUCTIONS_CHARS + 1));
   });
 
   it('joins the layers with blank lines, in order', () => {

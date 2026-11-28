@@ -190,6 +190,34 @@ Defaults when a tool is first seen:
 The server's annotations are hints. The UI shows them; the defaults use them;
 nothing else trusts them.
 
+## When Cortecho re-reads a server
+
+A connector has one sync path: a new MCP handshake. Instructions, protocol
+version, server name/version, capabilities and the tool list are read together
+and stored as one snapshot, so they can never disagree.
+
+- **Connect, Reconnect and the Tools tab's Refresh** all run that handshake.
+  Refresh is therefore a full sync, not a tool-only list.
+- **Link drops** reconnect with a fresh handshake; a restarted server's new
+  code and text are picked up, never the previous session's cached data.
+- **Tool changes** (`notifications/tools/list_changed`) are applied in place,
+  without reconnecting, when the server declares `tools.listChanged`.
+  Instructions cannot change through that notification.
+- **A periodic re-sync** runs about once an hour (with jitter), only while the
+  connector is idle. MCP has no "instructions changed" event, so this is how an
+  in-place change on the server becomes visible without pressing Refresh.
+- **Settings change detection:** a sync whose text and tools are identical
+  changes nothing in the prompt, so OpenAI's cached prompt prefix stays valid.
+- **Pinning still applies to every sync:** a changed tool definition goes
+  **Off** until you approve it; a new tool arrives **Off, needs review**.
+  Automatic syncs never enable a tool.
+
+The server's own note is cut at 500 characters to keep the prompt short. The
+Prompt tab shows the full text with a "Cut at 500 of N characters" line when it
+was longer, plus the server-reported name/version and the last sync time.
+Previews on the Instructions tabs are exactly what the next turn sends,
+including the "Connected services" line and the connector notes.
+
 ### Confirm by voice, honestly
 
 Confirm is an opt-in per tool. The barrier is enforced in code, not only in the prompt:
@@ -250,6 +278,8 @@ model can tell two Gmail accounts apart.
 
 - **Tool timeout:** 0.5–20 s per call, also clamped to the turn deadline.
 - **Result size:** 500–16 000 characters per call (default 4000).
+- **Server notes:** the server's own instructions are cut at 500 characters
+  (the Prompt tab says when and by how much).
 - **Tool count:** keep it small. Above 25 offered tools the UI and the doctor
   warn; turn off what you do not use.
 - **Definition pinning:** if a server changes a tool's description or schema,

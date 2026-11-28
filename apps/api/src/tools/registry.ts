@@ -170,6 +170,8 @@ export class ToolSet {
         name: existing?.name ?? entry.serverName ?? entry.server,
         description: existing?.description ?? entry.serverDescription ?? '',
         available: true,
+        // Keep the server's note: the connector line and its note are one entry.
+        ...(existing?.instructions ? { instructions: existing.instructions } : {}),
       });
     }
     return [...bySlug.values()].sort((a, b) => a.name.localeCompare(b.name));

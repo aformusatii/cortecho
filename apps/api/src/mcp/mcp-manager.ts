@@ -1,9 +1,10 @@
-import type { McpHealthEntry, McpToolPolicy, Settings } from '@cortecho/shared';
+import type { McpHealthEntry, McpSyncReason, McpToolPolicy, Settings } from '@cortecho/shared';
+import { MAX_SERVER_INSTRUCTIONS_CHARS } from '@cortecho/shared';
 import type { McpServerRow, McpToolRow } from '../db/schema.ts';
 import { createLogger, errorMessage } from '../lib/logger.ts';
 import type { ConnectorPromptLine } from '../tools/registry.ts';
-import type { McpRepository } from './mcp.repository.ts';
-import { McpConnection } from './mcp-connection.ts';
+import type { McpRepository, McpServerStatusDetail } from './mcp.repository.ts';
+import { McpConnection, type ServerSnapshot } from './mcp-connection.ts';
 import {
   definitionHash,
   exposedToolName,
@@ -132,6 +133,11 @@ export class McpManager {
     await this.connections.get(id)?.reconnect();
   }
 
+  /** The one sync entry: a handshake refreshes everything, list_changed only tools. */
+  async resync(id: number, reason: McpSyncReason = 'manual'): Promise<void> {
+    await this.connections.get(id)?.resync(reason);
+  }
+
   /** The OAuth flow's callback lookup; expired flows are ignored. */
   flowServer(state: string): number | null {
     const flow = this.flows.get(state);
@@ -168,9 +174,9 @@ export class McpManager {
           slug: connection.slug,
           name: connection.name,
           description: connection.row.description,
-          available: connection.state === 'connected' && connection.tools.length > 0,
+          available: connection.state === 'connected' && connection.toolCount > 0,
           ...(connection.row.useServerInstructions && detail.serverInstructions
-            ? { instructions: detail.serverInstructions.slice(0, 500) }
+            ? { instructions: detail.serverInstructions.slice(0, MAX_SERVER_INSTRUCTIONS_CHARS) }
             : {}),
         };
       });
@@ -192,102 +198,177 @@ export class McpManager {
   }
 
   /**
-   * Applies one `tools/list` result. The first sync gives read-only tools
-   * `auto` and everything else `confirm`; a tool that appears later is `off`
-   * until the owner reviews it. A changed definition keeps its old approval
-   * hash, so it is effectively off until approved.
+   * Applies one snapshot: the tool list (if it carries one) and the initialize
+   * metadata land together, synchronously, so a turn cannot read half a sync.
+   *
+   * Tool rules are unchanged: the first sync gives read-only tools `auto` and
+   * everything else `confirm`; a tool that appears later is `off` until the
+   * owner reviews it; a changed definition keeps its old approval hash, so it
+   * is effectively off until approved.
    */
-  syncTools(connection: McpConnection, listed: ListedTool[], instructions: string | null): void {
+  applySync(connection: McpConnection, snapshot: ServerSnapshot): void {
     try {
       const serverId = connection.id;
-      const existing = this.repository.tools(serverId);
       const freshRow = this.repository.get(serverId) ?? connection.row;
-      const detailBefore = this.repository.statusDetail(freshRow);
-      const firstSync = !detailBefore.toolsSyncedAt;
-      const byName = new Map(existing.map((tool) => [tool.name, tool]));
-      const seenNames = new Set<string>();
-      const takenExposed = new Set(
-        this.repository
-          .allTools()
-          .filter((tool) => tool.serverId !== serverId)
-          .map((tool) => tool.exposedName),
-      );
-      for (const tool of existing) takenExposed.add(tool.exposedName);
-      const at = new Date().toISOString();
+      const before = this.repository.statusDetail(freshRow);
+      const at = snapshot.syncedAt;
+      const counts = snapshot.tools ? this.syncTools(connection, snapshot.tools) : null;
+      const detail: McpServerStatusDetail = {
+        ...before,
+        lastSyncedAt: at,
+        lastSyncReason: snapshot.reason,
+        syncError: snapshot.syncError,
+        ...(snapshot.tools ? { toolsSyncedAt: before.toolsSyncedAt ?? at } : {}),
+      };
 
-      for (const item of listed) {
-        seenNames.add(item.name);
-        const sanitized = sanitizeInputSchema(item.inputSchema);
-        const annotations = item.annotations ?? {};
-        const hash = definitionHash(item, sanitized.schema, annotations);
-        const current = byName.get(item.name);
-        if (!current) {
-          const policy: McpToolPolicy = firstSync
-            ? annotations.readOnlyHint === true && annotations.destructiveHint !== true
-              ? 'auto'
-              : 'confirm'
-            : 'off';
-          const exposedName = exposedToolName(connection.slug, item.name, takenExposed);
-          takenExposed.add(exposedName);
-          this.repository.insertTool(
-            serverId,
-            {
-              name: item.name,
-              exposedName,
-              title: storedTitle(item),
-              description: storedDescription(item),
-              inputSchema: sanitized.schema,
-              annotations,
-              definitionHash: hash,
-              approvedHash: firstSync && !sanitized.tooLarge ? hash : null,
-              policy: sanitized.tooLarge ? 'off' : policy,
-            },
-            at,
-          );
-          continue;
+      const changes: string[] = [];
+      if (counts) {
+        const material = counts.added + counts.changed + counts.gone > 0;
+        // A repeated list with the same tools is not a change; the first sync is.
+        if (material || !before.toolsSyncedAt) {
+          const suffix = [
+            counts.added > 0 ? `${counts.added} new` : '',
+            counts.changed > 0 ? `${counts.changed} changed` : '',
+            counts.gone > 0 ? `${counts.gone} gone` : '',
+          ]
+            .filter(Boolean)
+            .join(', ');
+          changes.push(`${counts.listed} tool(s)${suffix ? ` (${suffix})` : ''}`);
         }
-        const policy: McpToolPolicy = sanitized.tooLarge ? 'off' : current.policy;
-        this.repository.updateTool(
-          current.id,
+      }
+
+      if (snapshot.initialize) {
+        const init = snapshot.initialize;
+        const cut = init.instructions?.slice(0, MAX_SERVER_INSTRUCTIONS_CHARS) ?? null;
+        const length = init.instructions?.length ?? null;
+        const instructionsChanged =
+          (before.serverInstructions ?? null) !== cut || (before.serverInstructionsLength ?? null) !== length;
+        if (instructionsChanged) {
+          changes.push(
+            `instructions ${before.serverInstructionsLength ?? 'none'}→${length ?? 'none'} characters` +
+              (length !== null && length > MAX_SERVER_INSTRUCTIONS_CHARS
+                ? ` (cut at ${MAX_SERVER_INSTRUCTIONS_CHARS})`
+                : ''),
+          );
+        }
+        if ((before.protocolVersion ?? null) !== init.protocolVersion) {
+          changes.push(
+            `protocol ${before.protocolVersion ?? 'unknown'}→${init.protocolVersion ?? 'unknown'}`,
+          );
+        }
+        if (
+          (before.serverName ?? null) !== init.serverName ||
+          (before.serverVersion ?? null) !== init.serverVersion
+        ) {
+          changes.push(
+            `serverInfo ${before.serverName ?? 'unknown'} ${before.serverVersion ?? ''}→${init.serverName ?? 'unknown'} ${init.serverVersion ?? ''}`.trim(),
+          );
+        }
+        detail.serverInstructions = cut;
+        detail.serverInstructionsLength = length;
+        detail.protocolVersion = init.protocolVersion;
+        detail.serverName = init.serverName;
+        detail.serverVersion = init.serverVersion;
+        detail.serverCapabilities = init.capabilities;
+      }
+
+      const syncErrorChanged = (before.syncError ?? null) !== (snapshot.syncError ?? null);
+      if (syncErrorChanged) changes.push(snapshot.syncError ? 'tool list failed' : 'tool list recovered');
+      if (changes.length > 0) {
+        this.repository.setStatusDetail(serverId, detail);
+        log.info(`connector "${connection.slug}" synced (${snapshot.reason}): ${changes.join(', ')}`);
+        this.options.onChange?.();
+      } else {
+        // Nothing prompt-bearing changed: keep the timestamp in memory only, so
+        // the stored text (and OpenAI's cached prefix) is not rewritten.
+        log.debug(`connector "${connection.slug}" synced (${snapshot.reason}): no change`);
+      }
+    } catch (error) {
+      log.warn(`could not store a sync for "${connection.slug}": ${errorMessage(error)}`);
+    }
+  }
+
+  /** Writes the tool table for one list; the caller logs the counts. */
+  private syncTools(
+    connection: McpConnection,
+    listed: ListedTool[],
+  ): { listed: number; added: number; changed: number; gone: number } {
+    const serverId = connection.id;
+    const existing = this.repository.tools(serverId);
+    const freshRow = this.repository.get(serverId) ?? connection.row;
+    const detailBefore = this.repository.statusDetail(freshRow);
+    const firstSync = !detailBefore.toolsSyncedAt;
+    const byName = new Map(existing.map((tool) => [tool.name, tool]));
+    const seenNames = new Set<string>();
+    const takenExposed = new Set(
+      this.repository
+        .allTools()
+        .filter((tool) => tool.serverId !== serverId)
+        .map((tool) => tool.exposedName),
+    );
+    for (const tool of existing) takenExposed.add(tool.exposedName);
+    const at = new Date().toISOString();
+    let added = 0;
+    let changed = 0;
+    let gone = 0;
+
+    for (const item of listed) {
+      seenNames.add(item.name);
+      const sanitized = sanitizeInputSchema(item.inputSchema);
+      const annotations = item.annotations ?? {};
+      const hash = definitionHash(item, sanitized.schema, annotations);
+      const current = byName.get(item.name);
+      if (!current) {
+        const policy: McpToolPolicy = firstSync
+          ? annotations.readOnlyHint === true && annotations.destructiveHint !== true
+            ? 'auto'
+            : 'confirm'
+          : 'off';
+        const exposedName = exposedToolName(connection.slug, item.name, takenExposed);
+        takenExposed.add(exposedName);
+        this.repository.insertTool(
+          serverId,
           {
             name: item.name,
+            exposedName,
             title: storedTitle(item),
             description: storedDescription(item),
             inputSchema: sanitized.schema,
             annotations,
             definitionHash: hash,
-            policy,
-            present: true,
+            approvedHash: firstSync && !sanitized.tooLarge ? hash : null,
+            policy: sanitized.tooLarge ? 'off' : policy,
           },
           at,
         );
+        added += 1;
+        continue;
       }
-
-      for (const tool of existing) {
-        if (!seenNames.has(tool.name) && tool.present) {
-          this.repository.setToolPresent(tool.id, false);
-        }
-      }
-
-      if (instructions !== null) {
-        const current = this.repository.get(serverId);
-        this.repository.setStatusDetail(serverId, {
-          ...(current ? this.repository.statusDetail(current) : {}),
-          serverInstructions: instructions.slice(0, 500),
-          toolsSyncedAt: detailBefore.toolsSyncedAt ?? at,
-        });
-      } else {
-        const current = this.repository.get(serverId);
-        this.repository.setStatusDetail(serverId, {
-          ...(current ? this.repository.statusDetail(current) : {}),
-          toolsSyncedAt: detailBefore.toolsSyncedAt ?? at,
-        });
-      }
-      log.info(`connector "${connection.slug}" listed ${listed.length} tool(s)`);
-      this.options.onChange?.();
-    } catch (error) {
-      log.warn(`could not store tools for "${connection.slug}": ${errorMessage(error)}`);
+      if (current.definitionHash !== hash) changed += 1;
+      const policy: McpToolPolicy = sanitized.tooLarge ? 'off' : current.policy;
+      this.repository.updateTool(
+        current.id,
+        {
+          name: item.name,
+          title: storedTitle(item),
+          description: storedDescription(item),
+          inputSchema: sanitized.schema,
+          annotations,
+          definitionHash: hash,
+          policy,
+          present: true,
+        },
+        at,
+      );
     }
+
+    for (const tool of existing) {
+      if (!seenNames.has(tool.name) && tool.present) {
+        this.repository.setToolPresent(tool.id, false);
+        gone += 1;
+      }
+    }
+    return { listed: listed.length, added, changed, gone };
   }
 
   private createConnection(row: McpServerRow): McpConnection {
@@ -296,7 +377,7 @@ export class McpManager {
       repository: this.repository,
       publicBaseUrl: () => this.baseUrl(),
       cimdEnabled: this.options.cimdEnabled,
-      onTools: (connection, tools, instructions) => this.syncTools(connection, tools, instructions),
+      onSync: (connection, snapshot) => this.applySync(connection, snapshot),
       onChange: () => this.options.onChange?.(),
       onFlow: (state, connection) => {
         this.flows.set(state, { serverId: connection.id, createdAt: Date.now() });

@@ -13,7 +13,7 @@ import { parseApiKey } from '../../esphome/noise.ts';
 import { AppError, validationError } from '../../lib/errors.ts';
 import { createLogger } from '../../lib/logger.ts';
 import { validate } from '../../lib/validation.ts';
-import { listenToolOptions } from '../../pipeline/listen-tool.ts';
+import { previewPromptInput } from '../../pipeline/prompt-input.ts';
 import { buildInstructions, buildPromptLayers } from '../../pipeline/prompt-layers.ts';
 import { EchoUnavailableError } from '../../pipeline/voice-pipeline.ts';
 import {
@@ -229,7 +229,12 @@ export function createDevicesRoutes(runtime: VoiceRuntime) {
         const id = deviceId(c.req.param('id'));
         const device = deviceOr404(id);
         const { settings } = store.forDevice(id);
-        const input = { settings, listenTool: listenToolOptions(settings), device };
+        const input = previewPromptInput({
+          settings,
+          device,
+          deviceId: id,
+          tools: runtime.tools,
+        });
         const document: InstructionsDocument = {
           layers: buildPromptLayers(input),
           text: buildInstructions(input),

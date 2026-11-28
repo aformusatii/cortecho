@@ -1,6 +1,7 @@
 import type {
   McpAuthType,
   McpOauthConfig,
+  McpSyncReason,
   McpToolAnnotations,
   McpToolPolicy,
   McpTransport,
@@ -62,9 +63,29 @@ export type McpServerStatusDetail = {
   lastConnectedAt?: string | null;
   protocolVersion?: string | null;
   transportUsed?: McpTransport | null;
+  /** The note from the last handshake, cut at MAX_SERVER_INSTRUCTIONS_CHARS. */
   serverInstructions?: string | null;
+  /** The full length before the cut; null when the server sent no note. */
+  serverInstructionsLength?: number | null;
+  serverName?: string | null;
+  serverVersion?: string | null;
+  serverCapabilities?: McpServerCapabilities | null;
   /** Set after the first tools/list, so a server that later adds a tool is not "first sync". */
   toolsSyncedAt?: string | null;
+  lastSyncedAt?: string | null;
+  lastSyncReason?: McpSyncReason | null;
+  /** A tools/list that failed on an otherwise healthy link. */
+  syncError?: string | null;
+};
+
+/** The capability flags worth keeping: what the server offers and what it notifies. */
+export type McpServerCapabilities = {
+  tools: boolean;
+  toolsListChanged: boolean;
+  prompts: boolean;
+  promptsListChanged: boolean;
+  resources: boolean;
+  resourcesListChanged: boolean;
 };
 
 export type McpCredentials = {

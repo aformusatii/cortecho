@@ -1,4 +1,10 @@
-import type { McpAuthState, McpConnectionState, McpErrorReason, McpTransport } from '@cortecho/shared';
+import type {
+  McpAuthState,
+  McpConnectionState,
+  McpErrorReason,
+  McpSyncReason,
+  McpTransport,
+} from '@cortecho/shared';
 import {
   Client,
   discoverAuthorizationServerMetadata,
@@ -11,7 +17,7 @@ import {
 } from '@modelcontextprotocol/client';
 import type { McpServerRow } from '../db/schema.ts';
 import { createLogger, errorMessage } from '../lib/logger.ts';
-import type { McpRepository } from './mcp.repository.ts';
+import type { McpRepository, McpServerCapabilities } from './mcp.repository.ts';
 import { SqliteOAuthProvider } from './oauth-provider.ts';
 import type { ListedTool } from './tool-mapping.ts';
 import { checkAuthorizationServerUrl, checkServerUrlResolved } from './url-policy.ts';
@@ -21,6 +27,38 @@ const log = createLogger('mcp');
 const CONNECT_TIMEOUT_MS = 12_000;
 const PING_INTERVAL_MS = 60_000;
 const REFRESH_AHEAD_MS = 5 * 60_000;
+/** MCP has no "instructions changed" event: refresh the handshake at this cadence. */
+const RESYNC_INTERVAL_MS = 60 * 60_000;
+const RESYNC_JITTER_MS = 5 * 60_000;
+/** How long a manual Refresh waits for a running tool call before answering busy. */
+const MANUAL_SYNC_WAIT_MS = 15_000;
+
+/** One handshake's metadata plus (optionally) the tool list, applied as one snapshot. */
+export type ServerSnapshot = {
+  reason: McpSyncReason;
+  syncedAt: string;
+  /** Present when the sync came from a handshake (connect, manual, periodic). */
+  initialize?: {
+    /** Untruncated, straight from the server. */
+    instructions: string | null;
+    protocolVersion: string | null;
+    serverName: string | null;
+    serverVersion: string | null;
+    capabilities: McpServerCapabilities;
+  };
+  /** Null = this sync did not list tools (or the list failed); keep the previous rows. */
+  tools: ListedTool[] | null;
+  transportUsed: McpTransport | null;
+  /** A tools/list that failed on an otherwise healthy link. */
+  syncError: string | null;
+};
+
+export class ConnectorBusyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConnectorBusyError';
+  }
+}
 
 export class ConnectorUnavailableError extends Error {
   readonly reason: McpErrorReason;
@@ -48,8 +86,8 @@ export type McpConnectionOptions = {
   /** The browser-facing base URL (PUBLIC_BASE_URL, or the request origin). */
   publicBaseUrl: () => string;
   cimdEnabled: boolean;
-  /** Tools changed: the manager stores them and records review flags. */
-  onTools: (connection: McpConnection, tools: ListedTool[], instructions: string | null) => void;
+  /** One snapshot per sync: initialize metadata and/or tools; the manager stores it. */
+  onSync: (connection: McpConnection, snapshot: ServerSnapshot) => void;
   onChange: (connection: McpConnection) => void;
   /** A new OAuth flow started: state → this connector. */
   onFlow: (state: string, connection: McpConnection) => void;
@@ -75,8 +113,15 @@ export class McpConnection {
   protocolVersion: string | null = null;
   transportUsed: McpTransport | null = null;
   lastConnectedAt: string | null = null;
+  /** The last handshake's full note (the database keeps the capped copy). */
   instructions: string | null = null;
-  tools: SdkTool[] = [];
+  serverName: string | null = null;
+  serverVersion: string | null = null;
+  lastSyncedAt: string | null = null;
+  lastSyncReason: McpSyncReason | null = null;
+  syncError: string | null = null;
+  /** How many tools the last successful list returned (availability for the prompt). */
+  toolCount = 0;
   /** True once the runtime tried to connect; a CLI doctor has not. */
   startedEver = false;
 
@@ -88,8 +133,15 @@ export class McpConnection {
   private pingTimer: NodeJS.Timeout | null = null;
   private refreshTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private resyncTimer: NodeJS.Timeout | null = null;
   private reconnectAttempt = 0;
   private started = false;
+  /** The reason carried into the next handshake's snapshot. */
+  private syncReason: McpSyncReason = 'connect';
+  /** A running resync, so two UI clicks cannot open two links. */
+  private syncing: Promise<void> | null = null;
+  /** Tool calls in flight: a resync waits for them instead of closing their link. */
+  private activeCalls = 0;
   /** Bumped on every stop/connect so a late async result cannot revive a link. */
   private generation = 0;
 
@@ -142,11 +194,49 @@ export class McpConnection {
   }
 
   async reconnect(): Promise<void> {
-    this.generation += 1;
-    this.clearTimers();
-    await this.closeLink();
-    this.reconnectAttempt = 0;
-    await this.connect();
+    await this.connect('connect');
+  }
+
+  /**
+   * The one refresh path. A handshake re-reads instructions, protocol version,
+   * server info, capabilities and the tool list together; a second caller
+   * joins the sync already running instead of opening a second link.
+   */
+  async resync(reason: McpSyncReason): Promise<void> {
+    if (this.syncing) {
+      await this.syncing.catch(() => {});
+      return this.assertSynced(reason);
+    }
+    if (!(await this.waitForIdle(reason === 'manual' ? MANUAL_SYNC_WAIT_MS : 0))) {
+      throw new ConnectorBusyError('A tool call is running; try again in a moment.');
+    }
+    const task = this.connect(reason);
+    this.syncing = task;
+    try {
+      await task;
+    } finally {
+      if (this.syncing === task) this.syncing = null;
+    }
+    this.assertSynced(reason);
+  }
+
+  private assertSynced(reason: McpSyncReason): void {
+    // Periodic and connect syncs carry their own state; a manual click needs a clear error.
+    if (reason === 'manual' && this.state !== 'connected') {
+      throw new ConnectorUnavailableError(
+        this.reason ?? 'unreachable',
+        this.lastError ?? 'The connector is not connected.',
+      );
+    }
+  }
+
+  private async waitForIdle(ms: number): Promise<boolean> {
+    const deadline = Date.now() + ms;
+    while (this.activeCalls > 0) {
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return true;
   }
 
   setRow(row: McpServerRow): void {
@@ -156,8 +246,9 @@ export class McpConnection {
     this.emit();
   }
 
-  async connect(): Promise<void> {
+  async connect(reason: McpSyncReason = 'connect'): Promise<void> {
     this.startedEver = true;
+    this.syncReason = reason;
     const generation = ++this.generation;
     this.clearTimers();
     await this.closeLink();
@@ -209,21 +300,15 @@ export class McpConnection {
     this.scheduleReconnect();
   }
 
-  /** Re-runs `tools/list` on demand (the Tools tab's Refresh). */
-  async refreshTools(): Promise<void> {
-    if (!this.client || this.state !== 'connected') {
-      throw new ConnectorUnavailableError(this.reason ?? 'unreachable', 'The connector is not connected.');
-    }
-    const result = await this.client.listTools();
-    this.tools = result.tools;
-    this.options.onTools(this, result.tools.map(toListedTool), this.instructions);
-  }
-
   /** Runs one tool. Errors stay typed so the caller can turn them into a speakable result. */
   async callTool(name: string, args: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
+    // A call that starts while a resync is reopening the link waits for the
+    // new client instead of hitting a closed one.
+    if (this.syncing) await this.syncing.catch(() => {});
     if (!this.client || this.state !== 'connected') {
       throw new ConnectorUnavailableError(this.reason ?? 'unreachable', 'The connector is not connected.');
     }
+    this.activeCalls += 1;
     try {
       return await this.client.callTool({ name, arguments: args }, { timeout: timeoutMs });
     } catch (error) {
@@ -240,6 +325,8 @@ export class McpConnection {
       this.setState('error', classifyError(error), errorMessage(error));
       this.scheduleReconnect();
       throw new ConnectorUnavailableError(classifyError(error), errorMessage(error));
+    } finally {
+      this.activeCalls -= 1;
     }
   }
 
@@ -271,7 +358,8 @@ export class McpConnection {
       this.pendingAuth = null;
       this.client = client;
       this.transport = transport;
-      await this.afterConnect(transport, 'streamable-http');
+      this.syncReason = 'connect';
+      await this.afterConnect('streamable-http');
       throw new Error('The server did not ask for authorization.');
     } catch (error) {
       if (error instanceof UnauthorizedError || isAuthFailure(error)) {
@@ -397,12 +485,33 @@ export class McpConnection {
             ...(provider ? { authProvider: provider, redirectPolicy: 'follow' as const } : {}),
             onInsufficientScope: 'throw',
           });
-    const client = new Client({ name: 'cortecho', version: '0.1.0' });
-    client.setNotificationHandler('notifications/tools/list_changed', () => {
-      void this.refreshTools().catch((error) => {
-        log.debug(`tools/list_changed failed for "${this.slug}": ${errorMessage(error)}`);
-      });
-    });
+    const client = new Client(
+      { name: 'cortecho', version: '0.1.0' },
+      {
+        // The SDK registers this only when the server declares
+        // `tools.listChanged`; it debounces, evicts the response cache and
+        // re-lists. Tools cannot change instructions, so no reconnect.
+        listChanged: {
+          tools: {
+            debounceMs: 300,
+            onChanged: (error, tools) => {
+              if (error) {
+                log.debug(`tools/list_changed failed for "${this.slug}": ${errorMessage(error)}`);
+                return;
+              }
+              if (!tools) return;
+              this.applySnapshot({
+                reason: 'list-changed',
+                syncedAt: new Date().toISOString(),
+                tools: tools.map(toListedTool),
+                transportUsed: this.transportUsed,
+                syncError: null,
+              });
+            },
+          },
+        },
+      },
+    );
     await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, 'connect');
     if (generation !== this.generation) {
       await client.close().catch(() => {});
@@ -411,33 +520,82 @@ export class McpConnection {
     this.client = client;
     this.transport = transport;
     this.pendingAuth = null;
-    await this.afterConnect(transport, transportKind);
+    await this.afterConnect(transportKind);
   }
 
-  private async afterConnect(
-    transport: StreamableHTTPClientTransport | SSEClientTransport,
-    transportKind: 'streamable-http' | 'sse',
-  ): Promise<void> {
+  /**
+   * One snapshot per handshake: initialize metadata and the tool list land
+   * together. A failed list keeps the previous tools (a transient failure
+   * must not remove capabilities) but records the error.
+   */
+  private async afterConnect(transportKind: 'streamable-http' | 'sse'): Promise<void> {
+    const client = this.client;
+    if (!client) return;
+    const info = client.getServerVersion();
+    const capabilities = client.getServerCapabilities();
+    const initialize = {
+      instructions: client.getInstructions() ?? null,
+      protocolVersion: client.getNegotiatedProtocolVersion() ?? null,
+      serverName: info?.name ?? null,
+      serverVersion: info?.version ?? null,
+      capabilities: {
+        tools: Boolean(capabilities?.tools),
+        toolsListChanged: capabilities?.tools?.listChanged === true,
+        prompts: Boolean(capabilities?.prompts),
+        promptsListChanged: capabilities?.prompts?.listChanged === true,
+        resources: Boolean(capabilities?.resources),
+        resourcesListChanged: capabilities?.resources?.listChanged === true,
+      },
+    };
     this.transportUsed = transportKind;
-    this.protocolVersion = this.client?.getNegotiatedProtocolVersion() ?? null;
-    this.instructions = this.client?.getInstructions() ?? null;
     this.lastConnectedAt = new Date().toISOString();
     this.reconnectAttempt = 0;
     this.authState = this.row.authType === 'oauth' ? 'signed-in' : 'not-required';
+
+    let tools: ListedTool[] | null = null;
+    let syncError: string | null = null;
+    try {
+      // `use` can serve the SDK's cached list; a handshake must ask the server.
+      const result = await client.listTools(undefined, { cacheMode: 'refresh' });
+      tools = result.tools.map(toListedTool);
+    } catch (error) {
+      syncError = errorMessage(error);
+      log.warn(`tools/list failed for "${this.slug}": ${syncError}`);
+    }
+    if (client !== this.client) return; // stopped or replaced while listing
+
     this.setState('connected', null, null);
     log.info(`connector "${this.slug}" connected over ${transportKind}`);
-    try {
-      const result = await this.client?.listTools();
-      if (result) {
-        this.tools = result.tools;
-        this.options.onTools(this, result.tools.map(toListedTool), this.instructions);
-      }
-    } catch (error) {
-      log.warn(`tools/list failed for "${this.slug}": ${errorMessage(error)}`);
-    }
+    this.applySnapshot({
+      reason: this.syncReason,
+      syncedAt: new Date().toISOString(),
+      initialize,
+      tools,
+      transportUsed: transportKind,
+      syncError,
+    });
     this.schedulePing();
     this.scheduleRefresh();
-    void transport;
+    this.scheduleResync();
+  }
+
+  /** Applies one snapshot to memory, then hands the whole thing to the manager. */
+  private applySnapshot(snapshot: ServerSnapshot): void {
+    if (snapshot.initialize) {
+      this.instructions = snapshot.initialize.instructions;
+      this.protocolVersion = snapshot.initialize.protocolVersion;
+      this.serverName = snapshot.initialize.serverName;
+      this.serverVersion = snapshot.initialize.serverVersion;
+    }
+    if (snapshot.tools) this.toolCount = snapshot.tools.length;
+    this.lastSyncedAt = snapshot.syncedAt;
+    this.lastSyncReason = snapshot.reason;
+    this.syncError = snapshot.syncError;
+    try {
+      this.options.onSync(this, snapshot);
+    } catch (error) {
+      log.warn(`could not apply a sync for "${this.slug}": ${errorMessage(error)}`);
+    }
   }
 
   private handleFailure(error: unknown): void {
@@ -474,9 +632,7 @@ export class McpConnection {
       ...(current ? this.options.repository.statusDetail(current) : {}),
       lastError: this.lastError,
       lastConnectedAt: this.lastConnectedAt,
-      protocolVersion: this.protocolVersion,
       transportUsed: this.transportUsed,
-      serverInstructions: this.instructions,
     });
     this.emit();
   }
@@ -538,13 +694,49 @@ export class McpConnection {
     this.reconnectTimer.unref();
   }
 
+  /**
+   * MCP has no "instructions changed" notification, so an in-place server
+   * change is only visible through a new handshake. Hourly, jittered and only
+   * when no tool call is running; the prompt text only changes if the server's
+   * text did, so prompt caching is unaffected.
+   */
+  private scheduleResync(): void {
+    if (this.resyncTimer) clearTimeout(this.resyncTimer);
+    const jitter = Math.floor((Math.random() * 2 - 1) * RESYNC_JITTER_MS);
+    this.resyncTimer = setTimeout(
+      () => {
+        this.resyncTimer = null;
+        void this.periodicResync();
+      },
+      Math.max(60_000, RESYNC_INTERVAL_MS + jitter),
+    );
+    this.resyncTimer.unref();
+  }
+
+  private async periodicResync(): Promise<void> {
+    if (!this.started || !this.row.enabled || this.state !== 'connected') return;
+    if (this.syncing || this.activeCalls > 0) {
+      this.scheduleResync();
+      return;
+    }
+    log.debug(`connector "${this.slug}" re-syncing on the hourly schedule`);
+    try {
+      await this.resync('periodic');
+    } catch (error) {
+      log.debug(`periodic resync failed for "${this.slug}": ${errorMessage(error)}`);
+      this.scheduleResync();
+    }
+  }
+
   private clearTimers(): void {
     if (this.pingTimer) clearInterval(this.pingTimer);
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.resyncTimer) clearTimeout(this.resyncTimer);
     this.pingTimer = null;
     this.refreshTimer = null;
     this.reconnectTimer = null;
+    this.resyncTimer = null;
   }
 
   private async closeLink(): Promise<void> {

@@ -51,7 +51,21 @@ export function toServerStatus(manager: McpManager, row: McpServerRow): McpServe
     lastError: detail.lastError ?? connection?.lastError ?? null,
     lastConnectedAt: detail.lastConnectedAt ?? connection?.lastConnectedAt ?? null,
     protocolVersion: detail.protocolVersion ?? connection?.protocolVersion ?? null,
-    serverInstructions: detail.serverInstructions ?? connection?.instructions ?? null,
+    // An explicit null from the last handshake means "the server sends no note";
+    // never fall back to an older in-memory value in that case.
+    serverInstructions:
+      detail.serverInstructions !== undefined
+        ? detail.serverInstructions
+        : (connection?.instructions ?? null),
+    serverInstructionsLength:
+      detail.serverInstructionsLength !== undefined
+        ? detail.serverInstructionsLength
+        : (detail.serverInstructions?.length ?? connection?.instructions?.length ?? null),
+    serverName: detail.serverName ?? connection?.serverName ?? null,
+    serverVersion: detail.serverVersion ?? connection?.serverVersion ?? null,
+    lastSyncedAt: connection?.lastSyncedAt ?? detail.lastSyncedAt ?? null,
+    lastSyncReason: connection?.lastSyncReason ?? detail.lastSyncReason ?? null,
+    syncError: connection?.syncError ?? detail.syncError ?? null,
     accountLabel: credentials?.accountLabel ?? null,
     grantedScope: credentials?.grantedScope || null,
     expiresAt: credentials?.expiresAt ?? null,
