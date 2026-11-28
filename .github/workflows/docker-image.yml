@@ -86,7 +86,11 @@ jobs:
             type=raw,value=pr-${{ github.event.pull_request.number }}
             type=raw,value=sha-${{ github.event.pull_request.head.sha }}
             type=raw,value=tree-${{ steps.tree.outputs.tree }}
+          # metadata-action sets revision from github.sha, which on a pull
+          # request is GitHub's temporary merge commit; the image is built from
+          # the PR head, so the label must say that (cortecho-deploy compares it).
           labels: |
+            org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
             io.github.cortecho.pr=${{ github.event.pull_request.number }}
             io.github.cortecho.tree=${{ steps.tree.outputs.tree }}
 
