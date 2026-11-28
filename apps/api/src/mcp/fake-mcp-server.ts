@@ -1,6 +1,10 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { serve } from '@hono/node-server';
-import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
+import {
+  createMcpHandler,
+  McpServer,
+  WebStandardStreamableHTTPServerTransport,
+} from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 /**
@@ -14,6 +18,12 @@ export type FakeMcpServer = {
   issuer: string;
   /** Add a tool after the first list: tests the "new tool needs review" rule. */
   addLateTool: () => Promise<void>;
+  /** Change the note a *new* handshake returns (existing sessions keep theirs). */
+  setInstructions: (text: string | null) => void;
+  /** Send `notifications/tools/list_changed` to every session (stateful mode). */
+  sendToolsChanged: () => Promise<void>;
+  /** Close every session so the next request sees an unknown session (404). */
+  dropSessions: () => Promise<void>;
   /** Make the next access token expire in `seconds`. */
   setExpiresIn: (seconds: number) => void;
   /** Revoke the current refresh token (the next refresh fails). */
@@ -38,10 +48,16 @@ export async function startFakeMcpServer({
   port = 0,
   requireAuth = true,
   label = 'fake-mcp',
+  instructions = null,
+  stateful = false,
 }: {
   port?: number;
   requireAuth?: boolean;
   label?: string;
+  /** The `initialize` note this server sends. */
+  instructions?: string | null;
+  /** Keep sessions open so the server can send list_changed notifications. */
+  stateful?: boolean;
 } = {}): Promise<FakeMcpServer> {
   let base = '';
   const accessTokens = new Set<string>();
@@ -51,9 +67,33 @@ export async function startFakeMcpServer({
   let expiresIn = 3600;
   let lateToolAdded = false;
   let wrongIssuer = false;
+  let serverInstructions = instructions;
+  const lateToolServers = new WeakSet<McpServer>();
+  const sessions = new Map<
+    string,
+    { transport: WebStandardStreamableHTTPServerTransport; server: McpServer }
+  >();
+
+  const addLateToolTo = (server: McpServer) => {
+    if (!lateToolAdded || lateToolServers.has(server)) return;
+    lateToolServers.add(server);
+    server.registerTool(
+      'delete_everything',
+      {
+        title: 'Delete everything',
+        description: 'A tool added after the first sync.',
+        inputSchema: z.object({}),
+        annotations: { destructiveHint: true },
+      },
+      async () => ({ content: [{ type: 'text', text: 'deleted' }] }),
+    );
+  };
 
   const buildServer = () => {
-    const server = new McpServer({ name: label, version: '1.0.0' });
+    const server = new McpServer(
+      { name: label, version: '1.0.0' },
+      { instructions: serverInstructions ?? undefined },
+    );
     server.registerTool(
       'echo',
       {
@@ -117,22 +157,40 @@ export async function startFakeMcpServer({
         };
       },
     );
-    if (lateToolAdded) {
-      server.registerTool(
-        'delete_everything',
-        {
-          title: 'Delete everything',
-          description: 'A tool added after the first sync.',
-          inputSchema: z.object({}),
-          annotations: { destructiveHint: true },
-        },
-        async () => ({ content: [{ type: 'text', text: 'deleted' }] }),
-      );
-    }
+    addLateToolTo(server);
     return server;
   };
 
-  const handler = createMcpHandler(() => buildServer(), { legacy: 'stateless' });
+  const statelessHandler = createMcpHandler(() => buildServer(), { legacy: 'stateless' });
+
+  /** Stateful legacy serving: one transport and server per session, GET for notifications. */
+  const serveStateful = async (request: Request): Promise<Response> => {
+    const sessionId = request.headers.get('mcp-session-id') ?? '';
+    const session = sessionId ? sessions.get(sessionId) : undefined;
+    if (session) return session.transport.handleRequest(request);
+    if (request.method === 'POST' && !sessionId) {
+      const server = buildServer();
+      let transport: WebStandardStreamableHTTPServerTransport;
+      transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (id) => {
+          sessions.set(id, { transport, server });
+        },
+        onsessionclosed: (id) => {
+          sessions.delete(id);
+        },
+      });
+      await server.connect(transport);
+      return transport.handleRequest(request);
+    }
+    return new Response(JSON.stringify({ error: 'unknown session' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const serveMcp = (request: Request): Promise<Response> =>
+    stateful ? serveStateful(request) : statelessHandler.fetch(request);
 
   const combinedFetch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -229,7 +287,7 @@ export async function startFakeMcpServer({
           });
         }
       }
-      return handler.fetch(request);
+      return serveMcp(request);
     }
     return new Response('not found', { status: 404 });
   };
@@ -271,6 +329,24 @@ export async function startFakeMcpServer({
     issuer: base,
     addLateTool: async () => {
       lateToolAdded = true;
+      for (const session of sessions.values()) {
+        addLateToolTo(session.server);
+        await session.server.sendToolListChanged();
+      }
+    },
+    setInstructions: (text) => {
+      serverInstructions = text;
+    },
+    sendToolsChanged: async () => {
+      for (const session of sessions.values()) {
+        await session.server.sendToolListChanged();
+      }
+    },
+    dropSessions: async () => {
+      for (const [id, session] of sessions) {
+        sessions.delete(id);
+        await session.transport.close().catch(() => {});
+      }
     },
     setExpiresIn: (seconds) => {
       expiresIn = seconds;
@@ -285,6 +361,12 @@ export async function startFakeMcpServer({
       accessTokens.add(token);
     },
     calls,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: async () => {
+      for (const session of sessions.values()) {
+        await session.transport.close().catch(() => {});
+      }
+      sessions.clear();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
   };
 }

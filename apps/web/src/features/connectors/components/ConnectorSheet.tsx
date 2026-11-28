@@ -1,4 +1,5 @@
 import type { DeviceStatus, McpServerDetail, McpToolPolicy, McpToolStatus } from '@cortecho/shared';
+import { MAX_SERVER_INSTRUCTIONS_CHARS } from '@cortecho/shared';
 import { useQuery } from '@tanstack/react-query';
 import { CheckIcon, ExternalLinkIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -478,7 +479,7 @@ function ToolsTab({ connector }: { connector: McpServerDetail }) {
           disabled={refresh.isPending}
           onClick={() =>
             refresh.mutate(connector.id, {
-              onSuccess: () => toast.success('Tool list refreshed.'),
+              onSuccess: () => toast.success('Synced with the server.'),
               onError: (error) => toast.error(error.message),
             })
           }
@@ -590,7 +591,7 @@ function PromptTab({ connector }: { connector: McpServerDetail }) {
         <span>
           <span className="block text-sm font-medium">Use the server's instructions</span>
           <span className="text-xs text-muted-foreground">
-            Adds the server's own note (first 500 characters) to the prompt.
+            Adds the server's own note (first {MAX_SERVER_INSTRUCTIONS_CHARS} characters) to the prompt.
           </span>
         </span>
         <Switch id="sheet-use-instructions" checked={useInstructions} onCheckedChange={setUseInstructions} />
@@ -599,7 +600,24 @@ function PromptTab({ connector }: { connector: McpServerDetail }) {
         <div className="rounded-lg border bg-muted/30 p-3">
           <p className="mb-1 text-xs font-medium text-muted-foreground">Server instructions</p>
           <p className="whitespace-pre-wrap text-sm">{connector.serverInstructions}</p>
+          {connector.serverInstructionsLength !== null &&
+            connector.serverInstructionsLength > MAX_SERVER_INSTRUCTIONS_CHARS && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Cut at {MAX_SERVER_INSTRUCTIONS_CHARS} of {connector.serverInstructionsLength} characters; the
+                model sees only the part shown.
+              </p>
+            )}
         </div>
+      )}
+      {(connector.serverName || connector.lastSyncedAt) && (
+        <p className="text-xs text-muted-foreground">
+          {connector.serverName &&
+            `Server: ${connector.serverName}${connector.serverVersion ? ` ${connector.serverVersion}` : ''}`}
+          {connector.serverName && connector.protocolVersion && ' · '}
+          {connector.protocolVersion && `MCP ${connector.protocolVersion}`}
+          {connector.lastSyncedAt &&
+            `${connector.serverName || connector.protocolVersion ? ' · ' : ''}synced ${relativeTime(connector.lastSyncedAt)}`}
+        </p>
       )}
       <Button
         disabled={update.isPending}
@@ -757,6 +775,19 @@ function Field({
       )}
     </div>
   );
+}
+
+/** The Prompt tab's tiny "synced 5 min ago" line; no library for one timestamp. */
+function relativeTime(iso: string): string {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return iso;
+  const seconds = Math.round((Date.now() - then) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return new Date(then).toLocaleDateString();
 }
 
 export type { SheetTab };

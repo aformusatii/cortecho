@@ -9,7 +9,7 @@ import {
 import { Hono } from 'hono';
 import { AppError, validationError } from '../../lib/errors.ts';
 import { validate } from '../../lib/validation.ts';
-import { listenToolOptions } from '../../pipeline/listen-tool.ts';
+import { previewPromptInput } from '../../pipeline/prompt-input.ts';
 import { buildInstructions, buildPromptLayers } from '../../pipeline/prompt-layers.ts';
 import type { VoiceRuntime } from '../voice/voice-runtime.ts';
 import { SettingsValidationError, StaleSettingsError } from './effective.ts';
@@ -53,7 +53,7 @@ export function createSettingsRoutes(runtime: VoiceRuntime) {
     })
     .get('/settings/instructions', (c) => {
       const { settings } = runtime.settings.current();
-      const input = { settings, listenTool: listenToolOptions(settings) };
+      const input = previewPromptInput({ settings, deviceId: null, tools: runtime.tools });
       const document: InstructionsDocument = {
         layers: buildPromptLayers(input),
         text: buildInstructions(input),

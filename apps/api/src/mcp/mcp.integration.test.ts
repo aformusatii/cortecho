@@ -45,6 +45,24 @@ async function createHeaderConnector(): Promise<number> {
   return body.id;
 }
 
+async function createOpenConnector(description = 'A test server'): Promise<number> {
+  const response = await ctx?.app.request('/api/mcp/servers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Open tools',
+      slug: 'open',
+      url: fake?.url,
+      authType: 'none',
+      description,
+      useServerInstructions: true,
+    }),
+  });
+  expect(response?.status).toBe(201);
+  const body = await json<{ id: number }>(response as Response);
+  return body.id;
+}
+
 function makeRuntime() {
   return createTestRuntime({
     env: {
@@ -217,7 +235,7 @@ describe('MCP connectors (integration)', () => {
     await waitUntil(() => ctx?.mcp.connection(id)?.state === 'connected');
 
     await fake.addLateTool();
-    await ctx.mcp.connection(id)?.refreshTools();
+    await ctx.mcp.resync(id, 'manual');
     const detail = await json<{
       needsReview: number;
       tools: { name: string; policy: string; review: string | null }[];
@@ -271,6 +289,162 @@ describe('MCP connectors (integration)', () => {
     );
     expect(approved.needsReview).toBe(0);
     expect(approved.toolsEnabled).toBe(4);
+  });
+
+  it('manual refresh re-reads initialize, stores the new note and clears a dropped one', async () => {
+    fake = await startFakeMcpServer({ requireAuth: false, instructions: 'model list v1' });
+    ctx = makeRuntime();
+    const id = await createOpenConnector();
+    await waitUntil(() => ctx?.mcp.connection(id)?.state === 'connected');
+
+    type Status = { serverInstructions: string | null; serverInstructionsLength: number | null };
+    const first = await json<Status>(await ctx.app.request(`/api/mcp/servers/${id}`));
+    expect(first.serverInstructions).toBe('model list v1');
+    expect(first.serverInstructionsLength).toBe(13);
+
+    fake.setInstructions('model list v2, now with models');
+    const refreshed = await ctx.app.request(`/api/mcp/servers/${id}/tools/refresh`, { method: 'POST' });
+    expect(refreshed.status).toBe(200);
+    const second = await json<Status>(refreshed);
+    expect(second.serverInstructions).toBe('model list v2, now with models');
+    expect(second.serverInstructionsLength).toBe(30);
+
+    fake.setInstructions(null);
+    const cleared = await ctx.app.request(`/api/mcp/servers/${id}/tools/refresh`, { method: 'POST' });
+    expect(cleared.status).toBe(200);
+    const third = await json<Status>(cleared);
+    expect(third.serverInstructions).toBeNull();
+    expect(third.serverInstructionsLength).toBeNull();
+  });
+
+  it('reconnect after a dropped link re-reads initialize', async () => {
+    fake = await startFakeMcpServer({
+      requireAuth: false,
+      stateful: true,
+      instructions: 'before the restart',
+    });
+    ctx = makeRuntime();
+    const id = await createOpenConnector();
+    await waitUntil(() => ctx?.mcp.connection(id)?.state === 'connected');
+    const row = ctx.mcpRepository.get(id);
+    expect(row).not.toBeNull();
+    expect(ctx.mcpRepository.statusDetail(row as NonNullable<typeof row>).serverInstructions).toBe(
+      'before the restart',
+    );
+
+    fake.setInstructions('after the restart, with the new model list');
+    await fake.dropSessions();
+    await ctx.mcp.reconnect(id);
+    const detail = await json<{ serverInstructions: string | null }>(
+      await ctx.app.request(`/api/mcp/servers/${id}`),
+    );
+    expect(detail.serverInstructions).toBe('after the restart, with the new model list');
+  });
+
+  it('list_changed updates tools without reconnecting and keeps pinning', async () => {
+    fake = await startFakeMcpServer({ requireAuth: false, stateful: true });
+    ctx = makeRuntime();
+    const id = await createOpenConnector();
+    await waitUntil(() => ctx?.mcp.connection(id)?.state === 'connected');
+    const connectedAt = ctx.mcp.connection(id)?.lastConnectedAt;
+
+    await fake.addLateTool();
+    await waitUntil(() => ctx?.mcpRepository.findTool(id, 'delete_everything') !== null);
+    const detail = await json<{
+      tools: { name: string; policy: string; review: string | null }[];
+    }>(await ctx.app.request(`/api/mcp/servers/${id}`));
+    expect(detail.tools.find((tool) => tool.name === 'delete_everything')).toMatchObject({
+      policy: 'off',
+      review: 'new',
+    });
+    // A list_changed refresh must not close and reopen the link.
+    expect(ctx.mcp.connection(id)?.lastConnectedAt).toBe(connectedAt);
+  });
+
+  it('waits for a running tool call before the manual refresh reopens the link', async () => {
+    fake = await startFakeMcpServer({ requireAuth: false });
+    ctx = makeRuntime();
+    const id = await createOpenConnector();
+    await waitUntil(() => ctx?.mcp.connection(id)?.state === 'connected');
+    const connection = ctx.mcp.connection(id);
+    expect(connection).not.toBeNull();
+    if (!connection) return;
+
+    const call = connection.callTool('slow', { ms: 800 }, 5000);
+    await ctx.mcp.resync(id, 'manual');
+    await expect(call).resolves.toMatchObject({ content: [{ type: 'text', text: 'finally' }] });
+    expect(connection.state).toBe('connected');
+  });
+
+  it('cuts a long note at the shared cap and keeps the full length', async () => {
+    const note = `Models: ${'x'.repeat(1300)}`.slice(0, 1200);
+    fake = await startFakeMcpServer({ requireAuth: false, instructions: note });
+    ctx = makeRuntime();
+    const id = await createOpenConnector();
+    await waitUntil(() => ctx?.mcp.connection(id)?.state === 'connected');
+
+    const detail = await json<{
+      serverInstructions: string | null;
+      serverInstructionsLength: number | null;
+    }>(await ctx.app.request(`/api/mcp/servers/${id}`));
+    expect(detail.serverInstructions?.length).toBe(500);
+    expect(detail.serverInstructions).toBe(note.slice(0, 500));
+    expect(detail.serverInstructionsLength).toBe(1200);
+  });
+
+  it('exposes exactly the instructions a turn sends, with the connector note', async () => {
+    const note = 'Use the model list from this note.';
+    fake = await startFakeMcpServer({ requireAuth: false, instructions: note });
+    ctx = createTestRuntime({
+      env: {
+        CORTECHO_SECRET_KEY: SECRET,
+        PUBLIC_BASE_URL: 'http://cortecho.test',
+      },
+      devices: [{ name: 'Kitchen', port: 26099, prompt: 'This Echo is in the kitchen.' }],
+    });
+    const id = await createOpenConnector();
+    await waitUntil(() => ctx?.mcp.connection(id)?.state === 'connected');
+
+    const deviceId = ctx.created[0]?.id ?? 0;
+    expect(deviceId).toBeGreaterThan(0);
+    const { settings } = ctx.settings.forDevice(deviceId);
+    let sent = '';
+    const agent = new ResponsesAgent({
+      createResponse: async (request) => {
+        sent = request.instructions;
+        return {
+          status: 'completed',
+          output: [
+            {
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text: 'It is noon.' }],
+            },
+          ],
+        };
+      },
+      tools: ctx.runtime.tools,
+    });
+    await agent.reply('what time is it', new AbortController().signal, undefined, {
+      settings,
+      session: ctx.sessions.get('preview-test', 60_000),
+      toolSet: ctx.runtime.tools.snapshot({ settings, deviceId }),
+      deviceId,
+      device: { name: 'Kitchen', prompt: 'This Echo is in the kitchen.' },
+    });
+
+    const deviceDocument = await json<{ text: string }>(
+      await ctx.app.request(`/api/devices/${deviceId}/instructions`),
+    );
+    expect(deviceDocument.text).toBe(sent);
+    expect(deviceDocument.text).toContain('Connected services: Open tools');
+    expect(deviceDocument.text).toContain(`Open tools: ${note}`);
+
+    const globalDocument = await json<{ text: string; layers: { text: string }[] }>(
+      await ctx.app.request('/api/settings/instructions'),
+    );
+    expect(globalDocument.text).toContain('Connected services: Open tools');
+    expect(globalDocument.text).toContain(`Open tools: ${note}`);
   });
 
   it('refuses header auth without CORTECHO_SECRET_KEY, but no-auth connectors work', async () => {

@@ -17,7 +17,11 @@ import {
   type McpServerWrite,
   SecretKeyMissingError,
 } from '../../mcp/mcp.repository.ts';
-import { ConnectorAuthError, ConnectorUnavailableError } from '../../mcp/mcp-connection.ts';
+import {
+  ConnectorAuthError,
+  ConnectorBusyError,
+  ConnectorUnavailableError,
+} from '../../mcp/mcp-connection.ts';
 import { effectivePolicy } from '../../mcp/mcp-manager.ts';
 import { authFailureText, resultToText, truncateResult, wrapResult } from '../../mcp/tool-mapping.ts';
 import { checkServerUrlResolved } from '../../mcp/url-policy.ts';
@@ -76,6 +80,9 @@ export function createMcpRoutes(runtime: VoiceRuntime) {
     }
     if (error instanceof ConnectorUnavailableError) {
       return new AppError(502, 'UPSTREAM_ERROR', error.message);
+    }
+    if (error instanceof ConnectorBusyError) {
+      return new AppError(409, 'CONFLICT', error.message);
     }
     if (error instanceof ConnectorAuthError) {
       return new AppError(409, 'CONFLICT', error.message);
@@ -285,7 +292,9 @@ export function createMcpRoutes(runtime: VoiceRuntime) {
       const connection = manager.connection(id);
       if (!connection) throw new AppError(404, 'NOT_FOUND', `No connector #${id}.`);
       try {
-        await connection.refreshTools();
+        // Not a tools-only list: a handshake re-reads instructions, protocol,
+        // server info and capabilities together (the one sync path).
+        await manager.resync(id, 'manual');
         return c.json(detail(id));
       } catch (error) {
         throw toAppError(error);

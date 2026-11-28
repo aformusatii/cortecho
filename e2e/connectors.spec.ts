@@ -93,6 +93,17 @@ test.describe('Connectors', () => {
       await expect(tryDialog.getByText(/fake says hello from e2e/)).toBeVisible({ timeout: 15_000 });
       await tryDialog.getByRole('button', { name: 'Close', exact: true }).first().click();
 
+      // Refresh is a full sync: it re-reads initialize, so the Prompt tab gets
+      // the server's new note and shows that it was cut at the shared cap.
+      await sheet.getByRole('tab', { name: 'Prompt' }).click();
+      await expect(sheet.getByText(/first 500 characters/)).toBeVisible();
+      await expect(sheet.getByText(/Cut at 500 of 1200 characters/)).toBeVisible();
+      await sheet.getByRole('tab', { name: 'Tools' }).click();
+      await sheet.getByRole('button', { name: 'Refresh' }).click();
+      await expect(page.getByText('Synced with the server.')).toBeVisible({ timeout: 20_000 });
+      await sheet.getByRole('tab', { name: 'Prompt' }).click();
+      await expect(sheet.getByText(/Cut at 500 of 1200 characters/)).toBeVisible();
+
       // Per-Echo availability writes the connectors.disabled override.
       await page.goto(`/echos/${device.id}?tab=connectors`);
       const toggle = page.getByRole('switch', { name: `${device.name} may use ${name}` });

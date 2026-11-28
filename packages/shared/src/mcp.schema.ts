@@ -36,6 +36,17 @@ export type McpErrorReason = (typeof MCP_ERROR_REASONS)[number];
 export const MCP_TOOL_REVIEW_REASONS = ['new', 'changed'] as const;
 export type McpToolReviewReason = (typeof MCP_TOOL_REVIEW_REASONS)[number];
 
+/** What started a sync. Diagnostics only; `connect` includes restarts after a drop. */
+export const MCP_SYNC_REASONS = ['connect', 'manual', 'list-changed', 'periodic'] as const;
+export type McpSyncReason = (typeof MCP_SYNC_REASONS)[number];
+
+/**
+ * The owner wants short prompts, so a server's own note is cut to this many
+ * characters, in the store and in the prompt. Keep one constant for both and
+ * for the help text that explains it.
+ */
+export const MAX_SERVER_INSTRUCTIONS_CHARS = 500;
+
 /** Tool annotations are hints from the server, never trusted on their own. */
 export type McpToolAnnotations = {
   title?: string;
@@ -224,8 +235,18 @@ export type McpServerStatus = {
   lastError: string | null;
   lastConnectedAt: string | null;
   protocolVersion: string | null;
-  /** The server's `instructions` from initialize (shown by the Prompt tab). */
+  /** The server's `instructions` from the last handshake, cut at the cap (shown by the Prompt tab). */
   serverInstructions: string | null;
+  /** The server's full instructions length, before the cap; null when it sends none. */
+  serverInstructionsLength: number | null;
+  /** The server's self-reported name and version from the last handshake. */
+  serverName: string | null;
+  serverVersion: string | null;
+  /** The last successful sync: when it ran and what triggered it. */
+  lastSyncedAt: string | null;
+  lastSyncReason: McpSyncReason | null;
+  /** A tool list that failed on an otherwise healthy link (diagnostics only). */
+  syncError: string | null;
   /** OAuth identity, when the AS/a userinfo response provided it. */
   accountLabel: string | null;
   grantedScope: string | null;

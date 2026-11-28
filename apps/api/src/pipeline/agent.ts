@@ -10,6 +10,7 @@ import {
   listenToolOptions,
   parseListenArguments,
 } from './listen-tool.ts';
+import { turnPromptInput } from './prompt-input.ts';
 import { buildInstructions } from './prompt-layers.ts';
 import { answerWithCitations } from './search-answer.ts';
 import type { Agent, AgentContext, AgentReply } from './services.ts';
@@ -109,13 +110,7 @@ export class ResponsesAgent implements Agent {
         ...(leftS >= 0 ? { expiresInS: leftS } : { expiredSAgo: -leftS }),
       });
     }
-    const instructions = buildInstructions({
-      settings,
-      listenTool,
-      device,
-      connectors: toolSet.connectors(),
-      hasConfirmTools: toolSet.hasConfirmTools(),
-    });
+    const instructions = buildInstructions(turnPromptInput({ settings, device, toolSet }));
 
     const input: ResponseItem[] = [
       ...session.history,
