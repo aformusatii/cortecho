@@ -4,6 +4,11 @@ All notable changes to Cortecho are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+> **Releases are now generated on merge.** The GitHub Release is the record:
+> `release.yml` derives the version from the PR title and publishes generated
+> notes with the test evidence. This file is the hand-written history up to
+> that change; do not add a section per release by hand.
+
 ## [Unreleased]
 
 ### Fixed

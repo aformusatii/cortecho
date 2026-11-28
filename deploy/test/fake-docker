@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Test double for the docker CLI used by deploy/integration.test.ts.
+# It never talks to a Docker daemon; it logs the call and answers from
+# FAKE_* environment variables.
+set -euo pipefail
+
+log_file=${FAKE_DOCKER_LOG:?FAKE_DOCKER_LOG is required}
+printf 'docker %s\n' "$*" >> "$log_file"
+
+health=${FAKE_HEALTH_STATUS:-healthy}
+running=${FAKE_RUNNING:-1}
+if [ "$running" = "0" ]; then
+  running_json=false
+else
+  running_json=true
+fi
+image_id=${FAKE_IMAGE_ID:-sha256:fake-image-id}
+repo_digests=${FAKE_REPO_DIGESTS:-[]}
+if [ -n "${FAKE_LABELS_JSON:-}" ]; then
+  labels_json=$FAKE_LABELS_JSON
+else
+  labels_json='{}'
+fi
+
+state_json() {
+  if [ "$health" = "none" ]; then
+    printf '{"Running":%s}\n' "$running_json"
+  else
+    printf '{"Running":%s,"Health":{"Status":"%s"}}\n' "$running_json" "$health"
+  fi
+}
+
+case ${1:-} in
+  manifest)
+    echo "fake docker: manifest inspect is not allowed (platform digest risk)" >&2
+    exit 1
+    ;;
+  pull)
+    ;;
+  image)
+    case "$*" in
+      *"{{json .RepoDigests}}"*) printf '%s\n' "$repo_digests" ;;
+      *"{{json .Config.Labels}}"*) printf '%s\n' "$labels_json" ;;
+      *) ;;
+    esac
+    ;;
+  run)
+    cat "${FAKE_JOURNAL_FILE:?FAKE_JOURNAL_FILE is required}"
+    ;;
+  compose)
+    shift
+    case ${1:-} in
+      stop)
+        ;;
+      up)
+        if [ "${FAKE_FAIL_UP_ONCE:-0}" = "1" ] && [ ! -f "${FAKE_UP_MARKER:?FAKE_UP_MARKER is required}" ]; then
+          : > "$FAKE_UP_MARKER"
+          # Simulate the new container migrating the database before dying.
+          printf 'corrupted-by-failed-container\n' > "${FAKE_STAGE_DIR:?FAKE_STAGE_DIR is required}/data/app.db"
+          echo "container did not become healthy (health check failed)" >&2
+          exit 1
+        fi
+        ;;
+      ps)
+        printf '%s\n' "${FAKE_CONTAINER_ID:-fake-container-id}"
+        ;;
+      *)
+        ;;
+    esac
+    ;;
+  exec)
+    echo "cortecho doctor: 0 problems"
+    ;;
+  inspect)
+    case "$*" in
+      *"{{.Image}}"*) printf '%s\n' "$image_id" ;;
+      *"{{json .State}}"*) state_json ;;
+      *) cat "${FAKE_INSPECT_FILE:?FAKE_INSPECT_FILE is required}" ;;
+    esac
+    ;;
+  *)
+    echo "fake docker: unexpected command: $*" >&2
+    exit 1
+    ;;
+esac

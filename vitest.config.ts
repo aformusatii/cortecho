@@ -17,6 +17,7 @@ export default defineConfig({
       },
       // Plain-Node scripts run by the workflows: versioning and ghcr cleanup.
       { test: { name: 'scripts', root: './scripts', include: ['*.test.mjs'], environment: 'node' } },
+      { test: { name: 'deploy', root: './deploy', include: ['**/*.test.ts'], environment: 'node' } },
     ],
   },
 });

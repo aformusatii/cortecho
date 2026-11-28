@@ -13,6 +13,28 @@ announcements (`/api/say`). One process serves several Echos.
 Read [README.md](README.md) for the user-facing overview and [docs/](docs/) for
 the protocol, configuration, deployment and Echo procedures.
 
+## Development and stage
+
+- **This checkout is development only.** Run it with `npm run dev`, a fresh
+  database and simulated Echos (`FakeEcho`, `npm run fake-echo`). It holds no
+  production data or secrets.
+- **Stage is the owner's production**, a separate folder on the Docker host
+  (generic examples use `/srv/cortecho`). It runs an image pinned by digest and
+  serves the **real Echo**. The real Echo connects to stage only, never to a
+  dev server.
+- **Deploy to stage only when the owner asks**, with
+  [`deploy/cortecho-deploy`](deploy/README.md): `pr <N>`, `main`,
+  `version <X.Y.Z>`, `rollback [--restore-db]`, `status`. Never deploy on your
+  own initiative. One PR at a time on stage; after a merge or an abandoned PR,
+  deploy `main`.
+- **Required checks before merge:** `ci`, `image`, `integration`, `pr-title`;
+  the branch must be up to date and the merge is a squash. The PR title becomes
+  the squashed commit and must be a Conventional Commit (`feat`, `fix`, `perf`,
+  `docs`, `test`, `ci`, `chore`, `refactor`, `build`, with `!` for breaking).
+  Releases happen on merge only: `feat` → minor, `fix`/`perf` → patch,
+  `!`/`BREAKING CHANGE` → major (minor while 0.x); the other types only move
+  `:main`. Never push a `v*` tag by hand.
+
 ## Commands
 
 Run everything from the repository root.
@@ -24,19 +46,25 @@ Run everything from the repository root.
 | `npm run fake-echo -- q.wav [--port 26099] [--out a.wav] [--key b64]` | Fake hassmic on localhost: plays a WAV as a wake-word run, downloads and saves the answer |
 | `npm run echo-set-key -- --host 192.168.1.50` | **Changes the Echo**: gives it an API key, once (fallback; the UI adopts Echos itself). Ask the owner first |
 | `npm run build` / `npm start` | Production build / server (API + SPA on `:3000`) |
-| `npm run typecheck` | `tsc --noEmit` for every workspace and `e2e/` |
+| `npm run typecheck` | `tsc --noEmit` for every workspace, `e2e/`, `smoke/`, `onboarding/` and `deploy/` |
 | `npm run lint` | Biome lint + format check (`npm run format` fixes) |
-| `npm test` | Vitest: shared + API (unit + FakeEcho integration, no network) |
-| `npm run test:e2e` | Playwright against a production build, 3 viewports (two FakeEchos, no real Echo, no OpenAI key) |
-| `npm run test:smoke` | **Production smoke tests**: a simulated Echo ("Test Echo") against the *deployed* Cortecho, real OpenAI. Never in CI; needs `smoke/.env.smoke`, the deployment and money. **Ask the owner first** (see Smoke tests below) |
-| `npm run test:integration` | The Docker integration suite: a fresh install of the shipped image, the real /24 scan, one OpenAI turn, one ElevenLabs turn, one follow-up, "Listen here" in WebKit, one announcement and the UI tour. Mock AI by default; `OPENAI_MODE=real` needs `OPENAI_API_KEY_E2E`, ElevenLabs then runs in real mode with `ELEVENLABS_API_KEY_E2E` or skips with a reason |
+| `npm test` | Vitest: shared + API + onboarding helpers + scripts + deploy (unit and FakeEcho integration, no network) |
+| `npm run test:e2e` | Playwright against a production build, 3 viewports (375, 768, 1280), a fresh database per project, FakeEchos only, no OpenAI key |
+| `npm run test:integration` | The Docker integration lab: a fresh install of the image, onboarding, restart, both provider turns, a follow-up, "Listen here" in WebKit, an announcement, the UI tour and the evidence assets. Mock AI by default; `OPENAI_MODE=real` needs `OPENAI_API_KEY_E2E` (+ `ELEVENLABS_API_KEY_E2E` or skip) |
+| `DEPLOY_INTEGRATION=1 npx vitest run --project deploy` | The gated deploy-script integration test: a throwaway stage folder with fake `docker`/`gh`. Skipped in `npm test` |
+| `deploy/cortecho-deploy <command>` | **Stage only, on the owner's request**: `pr <N>`, `main`, `version <X.Y.Z>`, `rollback [--restore-db]`, `status` |
+| `npm run test:smoke` | **Production smoke tests**: a simulated Echo ("Test Echo") against stage, real OpenAI. Never in CI; needs `smoke/.env.smoke`, the deployment and money. **Ask the owner first** (see Smoke tests below) |
 | `npm run smoke:init` | Generates the simulated Echo's identity and writes `smoke/.env.smoke` (once) |
 | `npm run doctor` | Read-only configuration/link diagnostics |
 | `npm run db:generate` | New migration after editing `apps/api/src/db/schema.ts` |
 
-**Before you call any change done:** `npm run typecheck && npm run lint && npm test`
-must pass. Run `npm run test:e2e` when the UI or HTTP behaviour changes.
-After a deploy that changes voice behaviour, offer the owner a smoke run.
+**Done locally:** `npm run typecheck && npm run lint && npm test` must pass;
+also run `npm run test:e2e` when the UI or HTTP behaviour changes. Local passes
+are feedback.
+**Done in GitHub:** the PR's required checks (`ci`, `image`, `integration`,
+`pr-title`) are green on an up-to-date branch; they are the verdict.
+After a deploy that changes voice behaviour, offer the owner a smoke run (on
+request).
 
 ### Smoke tests (`smoke/`)
 
@@ -45,7 +73,7 @@ real Echo uses: the test's text becomes speech (the suite's own OpenAI key),
 streams in as mic audio, and the reply is downloaded and transcribed back.
 Cortecho knows the simulator only as one more `kind: echo` device named
 "Test Echo"; its per-Echo prompt and overrides are mirrored from the real Echo.
-Guide: [docs/development.md](docs/development.md#production-smoke-tests).
+Guide: [docs/development.md](docs/development.md#production-smoke-stage-on-request).
 
 - **Ask before running it.** It changes production state (enables the Test
   Echo device, writes its per-Echo settings), costs OpenAI money per turn
@@ -122,14 +150,19 @@ apps/web/src/
                           (setup: onboarding, the shared Add Echo flow, Discovered cards)
   components/, lib/       app shell + nav, ui/, api-client, query-client, displays
 e2e/                      Playwright specs, helpers, FakeEcho server
+.github/workflows/        ci, docker-image (build once + integration), release, ghcr-cleanup,
+                          pr-title, on-demand onboarding-e2e
+scripts/                  next-version.mjs (SemVer from PR titles) and ghcr-cleanup.mjs
+deploy/                   cortecho-deploy (stage deploy, rollback, status) and its tests
 smoke/                    production smoke tests (not a workspace; not in `npm test` or CI)
   harness/                setup/lifecycle + scenario API (smoke-echo.ts), Cortecho HTTP client,
                           voice (TTS cache, levels, transcription), report, matchers, cleanup
   scenarios/              *.smoke.ts, one file per area
   .env.smoke.example      every SMOKE_* variable; the real .env.smoke, .runs/, .cache/ are gitignored
-onboarding/               on-demand Docker integration + onboarding E2E: echo-sim, AI gateway
-                          (OpenAI + ElevenLabs), Playwright runner and run.sh (not a workspace;
-                          results in onboarding/out/)
+onboarding/               the Docker integration lab: echo-sim, AI gateway (OpenAI + ElevenLabs,
+                          mock by default), Playwright runner and run.sh. The `integration` PR
+                          job runs it against the PR image; `onboarding-e2e` runs it on demand
+                          (results in onboarding/out/)
 docs/                     user and contributor documentation
 ```
 
@@ -272,7 +305,14 @@ docs/                     user and contributor documentation
 - **Check current docs before using a library or OpenAI API** (Context7 MCP).
   OpenAI model names and audio formats change often.
 - Ask before long or expensive OpenAI runs (load tests).
-- Migrations: edit `schema.ts`, run `npm run db:generate`, commit the new SQL.
-  Never edit an applied migration.
+- **Migrations are forward-only and expand, then contract.** Edit `schema.ts`,
+  run `npm run db:generate`, commit the generated SQL; never edit an applied
+  migration. A PR's migration only adds (new tables, nullable or defaulted
+  columns) so the previous image still runs on the migrated stage database.
+  Removing or renaming happens in a later PR, once no released code reads the
+  old shape. If a PR cannot be expand-only, say so in its description; going
+  back from it uses `cortecho-deploy rollback --restore-db` (the backup from
+  before that deploy; data written since is lost). The deploy script warns when
+  the database has applied migrations the target image does not know.
 - The owner's own notes live in the gitignored `AGENTS.local.md`; do not copy
   them into tracked files.

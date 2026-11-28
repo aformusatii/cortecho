@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Test double for the gh CLI used by deploy/integration.test.ts.
+set -euo pipefail
+
+printf 'gh %s\n' "$*" >> "${FAKE_GH_LOG:?FAKE_GH_LOG is required}"
+
+case ${1:-} in
+  attestation)
+    ;;
+  pr)
+    cat "${FAKE_PR_FILE:?FAKE_PR_FILE is required}"
+    ;;
+  *)
+    echo "fake gh: unexpected command: $*" >&2
+    exit 1
+    ;;
+esac
