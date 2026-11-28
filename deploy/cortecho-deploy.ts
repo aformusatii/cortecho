@@ -752,7 +752,7 @@ async function deployCommand(parsed: ParsedArgs, command: Command, stageDir: str
   // No buildx on the Docker client in code-server: pulling the tag first makes
   // `docker image inspect` return the repo digest (the index digest the
   // attestation covers), and the pull is needed before the stop anyway.
-  docker(['pull', ref]);
+  docker(['pull', '--quiet', ref]);
   const digest = resolveDigest(ref);
   log(`target digest: ${digest}`);
   verifyAttestation(repo, digest);
@@ -923,7 +923,7 @@ async function rollbackCommand(parsed: ParsedArgs, stageDir: string): Promise<vo
 function ensureImage(ref: string): void {
   const local = docker(['image', 'inspect', ref], { quiet: true, allowFailure: true });
   if (local.status === 0) return;
-  docker(['pull', ref]);
+  docker(['pull', '--quiet', ref]);
 }
 
 function statusCommand(stageDir: string): void {
