@@ -72,11 +72,14 @@ Global options:
 
 ## What a deploy does
 
-1. Resolves the tag to the index/manifest digest with
-   `docker buildx imagetools inspect` and verifies its build provenance with
-   `gh attestation verify`. A `pr` deploy refuses a fork or a different head
-   owner, warns when the required checks are not green, and warns when the
-   image's revision label is older than the PR head.
+1. Resolves the tag to the index digest by pulling it (`docker pull`) and
+   reading the matching `repo@sha256:…` entry from
+   `docker image inspect <ref> --format '{{json .RepoDigests}}'`, then verifies
+   its build provenance with `gh attestation verify`. This does not need the
+   buildx plugin. The pull happens before the stop, so registry failures cost
+   no downtime. A `pr` deploy refuses a fork or a different head owner, warns
+   when the required checks are not green, and warns when the image's revision
+   label is older than the PR head.
 2. Stops without changes only when that digest is running in a container that
    exists, is running and is healthy. Otherwise it starts the pinned image
    again.
@@ -84,17 +87,15 @@ Global options:
    image is older than work already applied), or when the live WAL database
    cannot be read. It names `rollback --restore-db`; continuing needs `--yes` or
    an interactive yes.
-4. Pulls the target image **before** stopping, so registry failures cost no
-   downtime.
-5. Stops the stage, copies exactly `app.db`, `app.db-wal`, `app.db-shm` and
+4. Stops the stage, copies exactly `app.db`, `app.db-wal`, `app.db-shm` and
    `app.db-journal` to `backups/<UTC yyyymmddTHHMMSSZ>-<old digest or tag>/`
    (copied as `.partial`, size-checked, then renamed), saves the old image as
    `PREVIOUS_IMAGE`, writes the new digest into `CORTECHO_IMAGE`, and runs
    `docker compose up -d --wait --wait-timeout 90`.
-6. If the container is not healthy, restores the previous image and the backup
+5. If the container is not healthy, restores the previous image and the backup
    just taken, starts again, and exits non-zero with the reason. A failed
    restore is never followed by a start: it prints `stage needs a human`.
-7. Runs `cortecho doctor` as a **report** (its exit code is noted, never used to
+6. Runs `cortecho doctor` as a **report** (its exit code is noted, never used to
    roll back), then keeps the newest five backup directories.
 
 `rollback --restore-db` first takes a `backups/<stamp>-pre-rollback` copy, then

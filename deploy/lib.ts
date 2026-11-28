@@ -334,32 +334,31 @@ export function selectBackupsToPrune(entries: string[], keep = DEFAULT_BACKUP_KE
   return backupNames(entries).slice(keep);
 }
 
-export function parseInspectDigest(output: string): string | null {
-  for (const line of output.split(/\r?\n/)) {
-    const trimmed = line.trim().replace(/^Digest:[ \t]*/i, '');
-    if (isDigest(trimmed)) return trimmed;
-  }
-  return null;
+/**
+ * The tag reference (`repo:tag`) and the image repository (`repo`) are needed
+ * together: the repository prefix selects the right entry from
+ * `docker image inspect <ref> --format '{{json .RepoDigests}}'`.
+ */
+export function repoOfTagRef(ref: string): string | null {
+  const normalized = ref.trim();
+  const lastSlash = normalized.lastIndexOf('/');
+  const lastColon = normalized.lastIndexOf(':');
+  if (lastColon <= lastSlash) return null;
+  return normalized.slice(0, lastColon);
 }
 
-/**
- * `docker buildx imagetools inspect <ref> --format '{{json .Manifest}}'`
- * returns the index/manifest descriptor. Only that top-level digest is
- * acceptable: a platform digest from `docker manifest inspect` would pin the
- * wrong thing for a multi-arch image.
- */
-export function parseManifestDigest(output: string): string | null {
+export function digestFromRepoDigests(output: string, repo: string): string | null {
   let data: unknown;
   try {
     data = JSON.parse(output);
   } catch {
     return null;
   }
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) return null;
-  const record = data as Record<string, unknown>;
-  for (const key of ['digest', 'Digest']) {
-    const candidate = record[key];
-    if (typeof candidate === 'string' && isDigest(candidate)) return candidate;
+  if (!Array.isArray(data)) return null;
+  for (const entry of data) {
+    if (typeof entry !== 'string' || !entry.startsWith(`${repo}@`)) continue;
+    const digest = digestFromRef(entry);
+    if (digest) return digest;
   }
   return null;
 }

@@ -32,6 +32,7 @@ import {
   DEFAULT_GITHUB_REPO,
   DEFAULT_IMAGE_REPO,
   digestFromRef,
+  digestFromRepoDigests,
   EnvFileError,
   formatBackupAge,
   isDbFile,
@@ -40,10 +41,10 @@ import {
   type ParsedArgs,
   parseArgs,
   parseJournal,
-  parseManifestDigest,
   parseRollup,
   prGuardVerdict,
   readEnvValue,
+  repoOfTagRef,
   revisionMismatch,
   selectBackupsToPrune,
   setEnvValue,
@@ -210,17 +211,25 @@ function containerId(stageDir: string, all = false): string | null {
   return id ?? null;
 }
 
+/**
+ * No buildx here: the Docker CLI in code-server may not have the plugin.
+ * Pulling the tag first and reading RepoDigests gives the same index digest
+ * (the one the attestation covers), and the pull is needed before the stop
+ * anyway.
+ */
 function resolveDigest(ref: string): string {
-  const result = docker(['buildx', 'imagetools', 'inspect', ref, '--format', '{{json .Manifest}}'], {
+  const repo = repoOfTagRef(ref);
+  if (!repo) {
+    throw new DeployFailure(`cannot determine the repository of ${ref}`);
+  }
+  const result = docker(['image', 'inspect', ref, '--format', '{{json .RepoDigests}}'], {
     quiet: true,
     allowFailure: true,
   });
-  const digest = parseManifestDigest(result.stdout);
+  const digest = result.status === 0 ? digestFromRepoDigests(result.stdout, repo) : null;
   if (digest) return digest;
-  const detail = lastLine(result.stderr) || lastLine(result.stdout) || 'no index/manifest digest';
-  throw new DeployFailure(
-    `cannot resolve the index/manifest digest of ${ref}: ${detail}. Is the image pushed and is buildx available?`,
-  );
+  const detail = lastLine(result.stderr) || result.stdout.trim() || 'no repo digest';
+  throw new DeployFailure(`cannot resolve ${ref} to a ${repo}@sha256:… digest after pulling it: ${detail}`);
 }
 
 function verifyAttestation(repo: string, digest: string): void {
@@ -721,11 +730,34 @@ async function deployCommand(parsed: ParsedArgs, command: Command, stageDir: str
 
   log(`target image: ${ref}`);
   const prHeadOid = command.kind === 'pr' ? checkPullRequest(command.number) : null;
+  const currentImage = requireEnvImage(content);
+
+  if (parsed.dryRun) {
+    const state = runningState(stageDir, content);
+    const oldShort = state.digest ? shortDigest(state.digest) : currentImage;
+    log(`would pull ${ref} before touching the stage`);
+    log(`would read the ${repo}@sha256:… digest from docker image inspect ${ref}`);
+    log('would verify the build provenance of that digest');
+    if (prHeadOid) log('would compare the PR image revision with the PR head');
+    log(`would check migrations in ${ref} against data/app.db`);
+    log(`would stop the stage only if it is not already healthy on that digest (old image: ${oldShort})`);
+    log(`would copy data/app.db* to backups/<UTC stamp>-${backupSuffix(currentImage)}`);
+    log(`would set PREVIOUS_IMAGE=${currentImage}`);
+    log(`would set CORTECHO_IMAGE=${repo}@sha256:…`);
+    log(`would run docker compose up -d --wait --wait-timeout ${WAIT_TIMEOUT_SECONDS}`);
+    log('would run `cortecho doctor` and prune old backups');
+    return;
+  }
+
+  // No buildx on the Docker client in code-server: pulling the tag first makes
+  // `docker image inspect` return the repo digest (the index digest the
+  // attestation covers), and the pull is needed before the stop anyway.
+  docker(['pull', ref]);
   const digest = resolveDigest(ref);
   log(`target digest: ${digest}`);
   verifyAttestation(repo, digest);
+  if (prHeadOid) checkPrRevision(prHeadOid, ref);
 
-  const currentImage = requireEnvImage(content);
   const state = runningState(stageDir, content);
   if (state.digest === digest && state.exists && state.running && state.health === 'healthy') {
     log(`the running image already is ${shortDigest(digest)} and the container is healthy; nothing to do`);
@@ -736,24 +768,6 @@ async function deployCommand(parsed: ParsedArgs, command: Command, stageDir: str
   }
 
   const target = pinnedImage(repo, digest);
-  const oldShort = state.digest ? shortDigest(state.digest) : currentImage;
-  if (parsed.dryRun) {
-    log(`would pull ${target} before touching the stage`);
-    if (prHeadOid) log('would compare the PR image revision with the PR head');
-    log(`would check migrations in ${target} against data/app.db`);
-    log(`would stop the stage (old image: ${oldShort})`);
-    log(`would copy data/app.db* to backups/<UTC stamp>-${backupSuffix(currentImage)}`);
-    log(`would set PREVIOUS_IMAGE=${currentImage}`);
-    log(`would set CORTECHO_IMAGE=${target}`);
-    log(`would run docker compose up -d --wait --wait-timeout ${WAIT_TIMEOUT_SECONDS}`);
-    log('would run `cortecho doctor` and prune old backups');
-    return;
-  }
-
-  // Pulling first means a broken registry or missing tag fails before any
-  // downtime, and it warms the image for the journal check.
-  docker(['pull', target]);
-  if (prHeadOid) checkPrRevision(prHeadOid, target);
   await checkMigrations(stageDir, target, parsed.yes);
 
   const previousEnv = readEnvFile(stageDir);

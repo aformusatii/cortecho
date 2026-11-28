@@ -8,16 +8,16 @@ import {
   compareMigrations,
   countEnvKey,
   digestFromRef,
+  digestFromRepoDigests,
   formatBackupAge,
   isDbFile,
   isDigest,
   newestBackup,
   parseArgs,
-  parseInspectDigest,
-  parseManifestDigest,
   parseRollup,
   prGuardVerdict,
   readEnvValue,
+  repoOfTagRef,
   revisionMismatch,
   selectBackupsToPrune,
   setEnvValue,
@@ -29,7 +29,6 @@ import {
 } from './lib.ts';
 
 const DIGEST = `sha256:${'a'.repeat(64)}`;
-const OTHER = `sha256:${'b'.repeat(64)}`;
 
 describe('parseArgs', () => {
   it('parses every command', () => {
@@ -224,19 +223,22 @@ describe('image references and backups', () => {
 });
 
 describe('digest parsing', () => {
-  it('reads buildx output', () => {
-    expect(parseInspectDigest(`Name: x\nDigest: ${DIGEST}\n`)).toBe(DIGEST);
-    expect(parseInspectDigest(`${DIGEST}\n`)).toBe(DIGEST);
-    expect(parseInspectDigest('not a digest')).toBeNull();
+  it('splits a tag reference from its repository', () => {
+    expect(repoOfTagRef('ghcr.io/aformusatii/cortecho:pr-6')).toBe('ghcr.io/aformusatii/cortecho');
+    expect(repoOfTagRef('localhost:5000/team/cortecho:1.2.3')).toBe('localhost:5000/team/cortecho');
+    expect(repoOfTagRef('cortecho:dev')).toBe('cortecho');
+    expect(repoOfTagRef('cortecho')).toBeNull();
   });
 
-  it('reads only the index/manifest descriptor digest', () => {
-    expect(parseManifestDigest(JSON.stringify({ digest: DIGEST }))).toBe(DIGEST);
-    expect(parseManifestDigest(JSON.stringify({ Digest: OTHER }))).toBe(OTHER);
-    expect(parseManifestDigest(JSON.stringify({ manifests: [{ digest: OTHER }] }))).toBeNull();
-    expect(parseManifestDigest(JSON.stringify({ config: { digest: OTHER } }))).toBeNull();
-    expect(parseManifestDigest('{}')).toBeNull();
-    expect(parseManifestDigest('not json')).toBeNull();
+  it('takes the repository entry from RepoDigests (the index digest)', () => {
+    const output = JSON.stringify([
+      'other.example/cortecho@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      `ghcr.io/x/cortecho@${DIGEST}`,
+    ]);
+    expect(digestFromRepoDigests(output, 'ghcr.io/x/cortecho')).toBe(DIGEST);
+    expect(digestFromRepoDigests(output, 'ghcr.io/y/cortecho')).toBeNull();
+    expect(digestFromRepoDigests('not json', 'ghcr.io/x/cortecho')).toBeNull();
+    expect(digestFromRepoDigests(JSON.stringify([]), 'ghcr.io/x/cortecho')).toBeNull();
   });
 });
 

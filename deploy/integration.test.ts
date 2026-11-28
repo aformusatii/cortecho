@@ -156,7 +156,6 @@ function makeStage(options: StageOptions = {}): Stage {
     CORTECHO_DEPLOY_INVOKED_AS: '',
     FAKE_DOCKER_LOG: dockerLog,
     FAKE_GH_LOG: ghLog,
-    FAKE_TARGET_DIGEST: NEW_DIGEST,
     FAKE_JOURNAL_FILE: journal,
     FAKE_INSPECT_FILE: inspect,
     FAKE_PR_FILE: pr,
@@ -243,8 +242,10 @@ describe.skipIf(!enabled)('cortecho-deploy (throwaway stage, fake docker/gh)', (
     const calls = dockerCalls();
     expect(calls).toContain('docker compose stop');
     expect(calls).toContain('docker compose up -d --wait --wait-timeout 90');
-    expect(calls).toContain(`docker pull ${NEW_IMAGE}`);
-    expect(calls.indexOf(`docker pull ${NEW_IMAGE}`)).toBeLessThan(calls.indexOf('docker compose stop'));
+    expect(calls).toContain(`docker pull ${REPO}:pr-12`);
+    expect(calls.indexOf(`docker pull ${REPO}:pr-12`)).toBeLessThan(calls.indexOf('docker compose stop'));
+    expect(calls).toContain(`docker image inspect ${REPO}:pr-12 --format {{json .RepoDigests}}`);
+    expect(calls).not.toContain('docker buildx');
     expect(calls).not.toContain('docker manifest inspect');
     expect(calls).not.toContain('docker image prune');
     expect(calls).not.toContain('docker rmi');

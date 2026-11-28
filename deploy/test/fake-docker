@@ -31,9 +31,6 @@ state_json() {
 }
 
 case ${1:-} in
-  buildx)
-    printf '{"digest":"%s"}\n' "${FAKE_TARGET_DIGEST:?FAKE_TARGET_DIGEST is required}"
-    ;;
   manifest)
     echo "fake docker: manifest inspect is not allowed (platform digest risk)" >&2
     exit 1
