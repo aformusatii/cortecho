@@ -21,8 +21,26 @@ npm test
 npm run test:e2e     # when the UI or HTTP behaviour changes
 ```
 
-All four must pass. `npm run format` fixes formatting. No test needs a real
-Echo, an OpenAI key or the internet.
+All four must pass (the last when the UI or HTTP behaviour changes).
+`npm run format` fixes formatting. No test needs a real Echo, an OpenAI key or
+the internet.
+
+## Pull requests and releases
+
+- **Title:** a Conventional Commit (`feat`, `fix`, `perf`, `docs`, `test`, `ci`,
+  `chore`, `refactor`, `build`; `!` or a `BREAKING CHANGE:` footer for a
+  breaking change). With squash merge the title becomes the commit on `main`
+  and drives the version.
+- **Required checks:** `ci` (typecheck, lint, unit, e2e), `image` (the build),
+  `integration` (that digest in the Docker lab) and `pr-title`. The branch must
+  be up to date; the merge is **squash only** and cannot bypass checks.
+- **Releases happen on merge.** `feat` publishes a minor, `fix`/`perf` a patch,
+  a breaking change a major (minor while 0.x); other types publish nothing and
+  only move `:main`. The release re-tags the same digest that was tested, so
+  `:latest` means the newest release. Never push a `v*` tag by hand.
+- A maintainer may deploy a PR's image to a stage (the production-like install
+  serving the real Echo) before merging, on request. That is not a required
+  step and does not replace the checks.
 
 ## Adding a tool
 

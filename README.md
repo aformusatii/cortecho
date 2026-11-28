@@ -156,8 +156,10 @@ services:
 ```
 
 Cortecho keeps your settings and paired Echos in `./data`. The container runs
-as UID 1000, so that user needs write access to the folder. Start the app from
-the same directory.
+as UID 1000, so that user needs write access to the folder. `:latest` follows
+the newest **release**; pin `:X.Y.Z` or a digest for a production install (see
+[deployment](docs/deployment.md#image-tags)). Start the app from the same
+directory.
 
 ```bash
 docker compose up -d
