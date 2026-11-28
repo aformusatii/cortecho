@@ -57,9 +57,7 @@ test.describe('Setup', () => {
     if (isMobile(testInfo)) {
       // Poll: the dialog opens with a zoom-in animation (95% → 100%), and a
       // single measurement during it reads ~367 px (the CI flake of this test).
-      await expect
-        .poll(async () => (await dialog.boundingBox())?.width ?? 0)
-        .toBeGreaterThanOrEqual(370);
+      await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(370);
     }
     await saveScreenshot(page, testInfo, 'setup-discovered', { fullPage: false });
 
