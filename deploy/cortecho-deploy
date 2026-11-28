@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Thin launcher: find the real script even when this file is symlinked into a
+# stage folder, but keep the invoked path so the stage folder can default to
+# the symlink's directory (never the checkout's deploy/ directory).
+set -euo pipefail
+
+invoked=${BASH_SOURCE[0]}
+real=$invoked
+while [ -L "$real" ]; do
+  link_dir=$(cd -P -- "$(dirname -- "$real")" && pwd)
+  target=$(readlink -- "$real")
+  case $target in
+    /*) real=$target ;;
+    *) real=$link_dir/$target ;;
+  esac
+done
+script_dir=$(cd -P -- "$(dirname -- "$real")" && pwd)
+
+CORTECHO_DEPLOY_INVOKED_AS=$invoked exec node "$script_dir/cortecho-deploy.ts" "$@"
