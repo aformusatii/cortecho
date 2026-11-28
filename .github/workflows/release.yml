@@ -1,0 +1,352 @@
+# Runs on every push to main. Build-once means nothing here builds:
+#   promote  moves :main to the digest the PR integration run tested (by the
+#            commit's git tree hash), and never rebuilds.
+#   release  derives the next SemVer from the squash commits since the last
+#            tag, tags the same digest :X.Y.Z / :X.Y / :latest, creates the git
+#            tag, and publishes the GitHub Release with the PR's evidence.
+#
+# A commit that does not publish (docs/test/ci/chore/refactor/build) stops
+# after promote: :main moved, no release.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One release at a time; never cancel a run that may be half way through
+# creating a tag or a Release. GitHub keeps only one pending run per group, so
+# the bump below is computed over every commit since the last tag, not just
+# HEAD: a dropped run's commit still contributes its bump to the survivor.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+  actions: read
+
+jobs:
+  promote:
+    name: promote
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tree: ${{ steps.tree.outputs.tree }}
+      digest: ${{ steps.promote.outputs.digest }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Compute the git tree hash
+        id: tree
+        run: echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      # With the squash-merge + up-to-date rules, the merge commit's tree equals
+      # the PR head's tree, so its :tree-<hash> tag is the image that was tested.
+      # Re-tagging copies the index unchanged (same digest). Neither this file
+      # nor this job may build.
+      - name: Promote the tested image to :main
+        id: promote
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          TREE: ${{ steps.tree.outputs.tree }}
+        run: |
+          tree_ref="${IMAGE}:tree-${TREE}"
+          if ! digest="$(docker buildx imagetools inspect "$tree_ref" --format '{{.Manifest.Digest}}' 2>/dev/null)"; then
+            echo "::error::No ghcr image for tree ${TREE} (${tree_ref}). Nothing was rebuilt and nothing was released. If this change came from a fork PR, re-open it from a branch of this repository. Otherwise re-run the image and integration jobs of the merged PR's head, then re-run this workflow."
+            exit 1
+          fi
+          echo "tree tag ${tree_ref} -> ${digest}"
+
+          docker buildx imagetools create -t "${IMAGE}:main" "${IMAGE}@${digest}"
+          main_digest="$(docker buildx imagetools inspect "${IMAGE}:main" --format '{{.Manifest.Digest}}')"
+          echo "${IMAGE}:main -> ${main_digest}"
+
+          if [[ "$main_digest" != "$digest" ]]; then
+            echo "::error::${IMAGE}:main resolved to ${main_digest}, expected the tested digest ${digest}"
+            exit 1
+          fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: release
+    needs: promote
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+      # Read the PR title/body for the bump (a squash may use the commit title).
+      pull-requests: read
+
+    steps:
+      # Full history and tags: the bump is computed over every commit since the
+      # latest `v*` tag and --generate-notes lists the changes since it.
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Compute image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      # The bump is the maximum over ALL commits since the last tag, each with
+      # its PR's title/body when GitHub knows it: a squash merge may use the
+      # single commit's title, and a dropped pending run must not lose a bump.
+      - name: Compute the release
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing="$(git tag --points-at HEAD --list 'v[0-9]*' | sort -V | tail -n1)"
+          if [[ -n "$existing" ]]; then
+            echo "version=${existing#v}" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Already released"
+              echo ""
+              echo "HEAD already carries \`${existing}\`; nothing was re-tagged or published."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          latest="$(git tag --list 'v[0-9]*' | sort -V | tail -n1)"
+          range="HEAD"
+          if [[ -n "$latest" ]]; then range="${latest}..HEAD"; fi
+
+          commits='[]'
+          while read -r sha; do
+            if [[ -z "$sha" ]]; then continue; fi
+            subject="$(git log -1 --format=%s "$sha")"
+            body="$(git log -1 --format=%b "$sha")"
+            pr="$(printf '%s' "$subject" | sed -n 's/.*(#\([0-9][0-9]*\))$/\1/p')"
+            meta=""
+            if [[ -n "$pr" ]]; then
+              meta="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq '{title, body: (.body // "")}' 2>/dev/null || true)"
+            else
+              meta="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}/pulls" --jq '.[0] | select(. != null) | {title, body: (.body // "")}' 2>/dev/null || true)"
+            fi
+            if [[ -n "$meta" && "$meta" != "null" ]]; then
+              commits="$(jq -c --arg sha "$sha" --argjson pr "$meta" '. + [{sha:$sha, title:$pr.title, body:$pr.body}]' <<<"$commits")"
+            else
+              commits="$(jq -c --arg sha "$sha" --arg title "$subject" --arg body "$body" '. + [{sha:$sha,title:$title,body:$body}]' <<<"$commits")"
+            fi
+          done < <(git log --reverse --format=%H "$range")
+          printf '%s\n' "$commits" > commits.json
+
+          version="$(node scripts/next-version.mjs --latest "$latest" --commits-file commits.json)"
+          echo "commits since ${latest:-the first release}: $(jq 'length' commits.json)"
+          echo "release: ${version:-none}"
+
+          publish=false
+          if [[ -z "$version" ]]; then
+            {
+              echo "### No release for this commit"
+              echo ""
+              echo "\`:main\` moved to \`${{ needs.promote.outputs.digest }}\`; none of the commits since \`${latest:-the first release}\` publishes a version."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif gh release view "v${version}" >/dev/null 2>&1; then
+            {
+              echo "### Release already published"
+              echo ""
+              echo "Release \`v${version}\` already exists; nothing was re-tagged or published."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            publish=true
+          fi
+
+          head_subject="$(git log -1 --format=%s)"
+          pr="$(printf '%s' "$head_subject" | sed -n 's/.*(#\([0-9][0-9]*\))$/\1/p')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+          echo "pr=${pr}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: steps.version.outputs.publish == 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        if: steps.version.outputs.publish == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The evidence must come from the run that tested THIS digest. Artifacts
+      # are per tree, so several runs can exist: take the newest whose
+      # digest.txt matches, never just the newest.
+      - name: Find and download the evidence for this digest
+        id: evidence
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TREE: ${{ needs.promote.outputs.tree }}
+          DIGEST: ${{ needs.promote.outputs.digest }}
+        run: |
+          json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=evidence-tree-${TREE}&per_page=100")"
+          mapfile -t runs < <(printf '%s' "$json" | jq -r '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | reverse | .[].workflow_run.id')
+          if [[ ${#runs[@]} -eq 0 ]]; then
+            echo "::error::No unexpired evidence artifact evidence-tree-${TREE}. Re-run the integration job on the PR (artifacts live 30 days)."
+            exit 1
+          fi
+
+          found=""
+          for run_id in "${runs[@]}"; do
+            rm -rf candidate evidence
+            if ! gh run download "$run_id" --name "evidence-tree-${TREE}" --dir candidate --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "  run ${run_id}: artifact could not be downloaded"
+              continue
+            fi
+            tested="$(tr -d '[:space:]' < candidate/digest.txt 2>/dev/null || true)"
+            if [[ "$tested" == "$DIGEST" ]]; then
+              found="$run_id"
+              mv candidate evidence
+              echo "evidence for ${DIGEST} from run ${run_id}"
+              break
+            fi
+            echo "  run ${run_id}: evidence is for ${tested:-an unknown digest}, not ${DIGEST}"
+          done
+          if [[ -z "$found" ]]; then
+            echo "::error::No evidence artifact evidence-tree-${TREE} matches the promoted digest ${DIGEST}. Re-run the integration job on the PR."
+            exit 1
+          fi
+          echo "run_id=${found}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the evidence verdict and assets
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          verdict="$(jq -r '.verdict' evidence/summary.json)"
+          if [[ "$verdict" != "passed" ]]; then
+            echo "::error::Evidence verdict is '${verdict}', not 'passed'"
+            exit 1
+          fi
+          for asset in evidence.html integration-report.zip results.json junit.xml sbom.spdx.json; do
+            if [[ ! -f "evidence/${asset}" ]]; then
+              echo "::error::Missing evidence asset ${asset}"
+              exit 1
+            fi
+          done
+          echo "evidence: ${{ needs.promote.outputs.digest }}, verdict ${verdict}, all assets present"
+
+      - name: Verify the build attestation
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ needs.promote.outputs.digest }}
+        run: gh attestation verify "oci://${IMAGE}@${DIGEST}" -R "$GITHUB_REPOSITORY"
+
+      # Everything is prepared and verified before the first tag moves, so a
+      # failed release cannot leave :X.Y.Z / :latest or the git tag behind.
+      - name: Prepare the release notes
+        if: steps.version.outputs.publish == 'true'
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ needs.promote.outputs.digest }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PR: ${{ steps.version.outputs.pr }}
+          RUN_ID: ${{ steps.evidence.outputs.run_id }}
+        run: |
+          passed="$(jq -r '.steps.passed' evidence/summary.json)"
+          total="$(jq -r '.steps.total' evidence/summary.json)"
+          skipped="$(jq -r '.tests.skipped' evidence/summary.json)"
+          pr_line="PR: (#${PR:-unknown})"
+          if [[ -n "$PR" ]]; then
+            pr_line="PR: https://github.com/${GITHUB_REPOSITORY}/pull/${PR}"
+          fi
+
+          cat > notes.md <<NOTES
+          ## Docker image
+
+          - Digest: \`${DIGEST}\`
+          - Pin this digest in production: \`${IMAGE}@${DIGEST}\`
+
+          \`\`\`bash
+          docker pull ${IMAGE}:${VERSION}
+          \`\`\`
+
+          ## Tests
+
+          - \`ci\` (typecheck, lint, unit, e2e): passed — required check, https://github.com/${GITHUB_REPOSITORY}/pull/${PR:-unknown}/checks
+          - Integration (AI: mock): ${passed}/${total} steps passed, ${skipped} skipped — https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}
+          - Evidence attached: evidence.html, integration-report.zip, results.json, junit.xml, sbom.spdx.json
+
+          ${pr_line}
+
+          ## Verify
+
+          \`\`\`bash
+          gh attestation verify oci://${IMAGE}@${DIGEST} -R ${GITHUB_REPOSITORY}
+          \`\`\`
+          NOTES
+          echo "notes.md prepared"
+
+      - name: Tag the released image (no build)
+        if: steps.version.outputs.publish == 'true'
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ needs.promote.outputs.digest }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          major_minor="${VERSION%.*}"
+          docker buildx imagetools create \
+            -t "${IMAGE}:${VERSION}" \
+            -t "${IMAGE}:${major_minor}" \
+            -t "${IMAGE}:latest" \
+            "${IMAGE}@${DIGEST}"
+          echo "Tagged ${IMAGE}:${VERSION}, :${major_minor}, :latest at ${DIGEST}"
+
+      - name: Create the git tag
+        if: steps.version.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            echo "::error::Tag v${VERSION} already exists"
+            exit 1
+          fi
+          git tag "v${VERSION}" "$GITHUB_SHA"
+          git push origin "v${VERSION}"
+
+      - name: Publish the GitHub Release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            --verify-tag \
+            --title "v${VERSION}" \
+            --notes-file notes.md \
+            --generate-notes \
+            evidence/evidence.html \
+            evidence/integration-report.zip \
+            evidence/results.json \
+            evidence/junit.xml \
+            evidence/sbom.spdx.json
+          echo "Released v${VERSION} at ${{ needs.promote.outputs.digest }}"

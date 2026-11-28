@@ -1,0 +1,91 @@
+# Deletes the PR-push image versions (pr-*, sha-*, tree-*) and untagged
+# versions older than 3 days, and never a version carrying main/latest/X.Y/X.Y.Z
+# or a child manifest of one (multi-arch children, provenance/SBOM attestations).
+#
+# The first runs are dry: the owner reviews what would be deleted, then sets the
+# repository variable GHCR_CLEANUP_ENABLED=true. Deleting a package version is
+# permanent (GitHub keeps a 30-day restore window, but do not rely on it).
+name: ghcr cleanup
+
+on:
+  schedule:
+    # A quiet hour; the run only lists, and deletes when the owner enabled it.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List what would be deleted, delete nothing
+        type: boolean
+        default: true
+
+concurrency:
+  group: ghcr-cleanup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # Pull the open PR numbers: their images are never deleted, however old.
+  pull-requests: read
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # The script reads manifests (children + attestations) through the
+      # registry API, so it needs a logged-in docker as well as the gh token.
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide whether this is a dry run
+        id: mode
+        env:
+          EVENT: ${{ github.event_name }}
+          ENABLED: ${{ vars.GHCR_CLEANUP_ENABLED }}
+          INPUT: ${{ inputs.dry_run }}
+        run: |
+          # A schedule is dry unless the owner set the repository variable; a
+          # manual dispatch follows its input. (GitHub expressions turned the
+          # schedule case into an empty string, which always meant dry.)
+          if [[ "$EVENT" == "schedule" ]]; then
+            if [[ "$ENABLED" == "true" ]]; then dry=false; else dry=true; fi
+          else
+            dry="${INPUT:-true}"
+          fi
+          echo "dry_run=$dry" >> "$GITHUB_OUTPUT"
+          echo "dry run: $dry (event $EVENT, GHCR_CLEANUP_ENABLED=${ENABLED:-unset})"
+
+      - name: List open pull requests
+        id: open-prs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          prs="$(gh pr list --state open --limit 200 --json number)"
+          echo "json=$(printf '%s' "$prs" | jq -c '[.[].number]')" >> "$GITHUB_OUTPUT"
+
+      - name: Delete old PR image versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ghcr.io/${{ github.repository }}
+          ACCOUNT: ${{ github.repository_owner }}
+          PACKAGE: ${{ github.event.repository.name }}
+          DRY_RUN: ${{ steps.mode.outputs.dry_run }}
+          OPEN_PRS: ${{ steps.open-prs.outputs.json }}
+          CUTOFF_DAYS: '3'
+        run: node scripts/ghcr-cleanup.mjs

@@ -105,7 +105,7 @@ const results = readJson<Results>(path.join(outDir, 'results.json')) ?? {};
 const calls = readJson<Call[]>(path.join(outDir, 'openai-calls.json')) ?? [];
 const steps = [...(facts.steps ?? [])].sort((a, b) => a.n - b.n);
 const echo = facts.echo ?? {};
-const totalSteps = facts.run?.totalSteps ?? 12;
+const totalSteps = facts.run?.totalSteps ?? 28;
 const passed = steps.filter((step) => step.status === 'passed').length;
 const failedTests = countFailedTests(results);
 const resultsOk = (results.stats?.unexpected ?? failedTests) === 0;

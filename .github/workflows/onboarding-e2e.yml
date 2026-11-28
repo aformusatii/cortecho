@@ -111,7 +111,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: onboarding-proof.html
-          path: onboarding/out/proof/onboarding-proof.html
+          path: onboarding/out/evidence.html
           archive: false
           if-no-files-found: ignore
 

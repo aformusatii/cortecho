@@ -1,6 +1,7 @@
 # Runs the quality gates from AGENTS.md on every push and pull request:
 # typecheck, lint and unit tests, then the Playwright suite against a
 # production build (the same single-port server that Docker ships).
+# The job name `ci` is a required check on main: changing it changes the ruleset.
 name: CI
 
 on:
@@ -16,7 +17,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  ci:
+    name: ci
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

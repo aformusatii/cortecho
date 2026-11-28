@@ -67,7 +67,13 @@ test.describe('Connectors', () => {
       await openAdd(page, { name, slug, url: OPEN_MCP });
       await page.getByRole('button', { name: 'Save and connect' }).click();
 
-      const card = page.getByRole('listitem').filter({ hasText: name });
+      // The success toast is a listitem with the connector name too (and on
+      // mobile it can render inside main), so match the card by its Manage button.
+      const card = page
+        .getByRole('main')
+        .getByRole('listitem')
+        .filter({ hasText: name })
+        .filter({ has: page.getByRole('button', { name: 'Manage' }) });
       await expect(card).toBeVisible({ timeout: 20_000 });
       await expect(card.getByText('Connected')).toBeVisible();
       await expect(page.getByTestId('connector-tool-count')).toContainText('tools offered');
@@ -101,7 +107,11 @@ test.describe('Connectors', () => {
         .toContain(slug);
 
       await page.goto('/settings?tab=connectors');
-      const reloaded = page.getByRole('listitem').filter({ hasText: name });
+      const reloaded = page
+        .getByRole('main')
+        .getByRole('listitem')
+        .filter({ hasText: name })
+        .filter({ has: page.getByRole('button', { name: 'Manage' }) });
       await reloaded.getByRole('button', { name: 'Manage' }).click();
       await page.getByRole('dialog').getByRole('tab', { name: 'Delete' }).click();
       await page

@@ -53,7 +53,7 @@ function runFacts(): RunFacts {
     openaiMode: OPENAI_MODE,
     elevenlabsMode: ELEVENLABS_MODE,
     number: process.env.ONBOARDING_RUN_NUMBER ?? 'local',
-    totalSteps: Number(process.env.ONBOARDING_TOTAL_STEPS ?? '12'),
+    totalSteps: Number(process.env.ONBOARDING_TOTAL_STEPS ?? '28'),
     startedAt: process.env.ONBOARDING_STARTED_AT ?? new Date().toISOString(),
   };
 }
